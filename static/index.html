@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Math Research Agent</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="hero">
+    <h1>∑ Math Research Agent</h1>
+    <p>Paper Discovery → Idea Generation — Powered by LLM + arXiv</p>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="discover">📄 Discover</button>
+    <button class="tab" data-tab="chat">📝 Note Workshop</button>
+    <button class="tab" data-tab="reports">📈 Reports</button>
+  </nav>
+
+  <!-- ══════════════════════════════════════ -->
+  <!-- TAB 1: Paper Discovery + Idea Gen     -->
+  <!-- ══════════════════════════════════════ -->
+  <div class="tab-content active" id="tab-discover">
+
+    <!-- Sub-tab navigation -->
+    <div class="discover-subtabs">
+      <button class="discover-subtab active" data-subtab="papers">Papers</button>
+      <button class="discover-subtab" data-subtab="techlearn">Tech Learning</button>
+      <button class="discover-subtab" data-subtab="relations">Relations</button>
+    </div>
+
+    <!-- ── Sub-tab 1: Papers (existing) ── -->
+    <div class="discover-subcontent active" id="subtab-papers">
+      <div class="discover-layout">
+        <aside class="sidebar">
+          <h3>Search</h3>
+          <input type="text" id="search-query" placeholder="e.g. prime gaps, neural ODE, topological data analysis..." class="search-input">
+          <div class="search-options">
+            <label>Sort</label>
+            <select id="sort-by">
+              <option value="submittedDate">Newest first</option>
+              <option value="relevance">Relevance</option>
+              <option value="lastUpdatedDate">Recently updated</option>
+            </select>
+            <label>Max results: <span id="max-val">10</span></label>
+            <input type="range" id="max-results" min="3" max="20" value="10">
+          </div>
+          <button class="btn-send" id="btn-search" onclick="searchPapers()" style="width:100%;margin-top:8px">Search arXiv</button>
+
+          <h3>Selection Pool <span class="pool-count" id="pool-count">0</span></h3>
+          <div id="selection-pool" class="selection-pool">
+            <p class="pool-empty">Select papers from the list</p>
+          </div>
+
+          <h3>Selection Mode</h3>
+          <div class="mode-options">
+            <label><input type="radio" name="sel-mode" value="manual" checked> Manual</label>
+            <label><input type="radio" name="sel-mode" value="auto"> Auto (agent picks)</label>
+            <label><input type="radio" name="sel-mode" value="prompt"> Prompt-guided</label>
+          </div>
+          <textarea id="sel-prompt" class="sel-prompt-input" placeholder="e.g. find papers related to random matrix theory..." rows="2" style="display:none"></textarea>
+          <button class="btn-send" id="btn-auto-select" style="display:none;width:100%;margin-top:6px" onclick="autoSelect()">Let Agent Select</button>
+
+          <div style="margin-top:16px">
+            <textarea id="idea-prompt" class="sel-prompt-input" placeholder="(Optional) Guide idea generation..." rows="2"></textarea>
+            <button class="btn-send" id="btn-generate" onclick="generateIdeas()" style="width:100%;margin-top:6px" disabled>Generate Ideas</button>
+          </div>
+        </aside>
+
+        <main class="discover-main">
+          <div class="paper-list-header">
+            <h3 id="papers-title">Papers</h3>
+            <span id="papers-status" class="papers-status"></span>
+          </div>
+          <div class="paper-list" id="paper-list">
+            <div class="paper-list-empty">
+              <p>Enter a search query and click "Search arXiv" to discover papers</p>
+              <p class="hint">Try: "prime gaps", "neural ODE", "graph neural networks", "optimal transport"</p>
+            </div>
+          </div>
+
+          <div class="paper-detail" id="paper-detail" style="display:none">
+            <div class="detail-header">
+              <h3 id="detail-title"></h3>
+              <button class="btn-close" onclick="closeDetail()">&#10005;</button>
+            </div>
+            <div class="detail-meta">
+              <span id="detail-date"></span>
+              <span id="detail-categories"></span>
+            </div>
+            <p class="detail-authors" id="detail-authors"></p>
+            <div class="detail-abstract" id="detail-abstract"></div>
+            <div class="detail-toolbar">
+              <div class="detail-actions">
+                <button class="btn-send" id="btn-add-pool" onclick="addToPoolFromDetail()">+ Add to Pool</button>
+                <a class="btn-clear" id="detail-pdf" href="#" target="_blank">View PDF</a>
+                <a class="btn-clear" id="detail-url" href="#" target="_blank">arXiv Page</a>
+              </div>
+              <button class="btn-analyze" id="btn-analyze-paper" onclick="analyzePaper()">Analyze Paper</button>
+            </div>
+
+            <div class="detail-analysis">
+              <div class="analysis-output" id="paper-analysis-output" style="display:none">
+                <div class="idea-header">
+                  <h4>Technical Analysis</h4>
+                </div>
+                <div class="idea-content" id="paper-analysis-content"></div>
+              </div>
+            </div>
+
+            <div class="detail-qa">
+              <div class="qa-messages" id="qa-messages"></div>
+              <div class="qa-input-row">
+                <input type="text" id="qa-input" placeholder="Ask a question about this paper..." class="search-input">
+                <button class="btn-send" id="btn-qa-send" onclick="askPaperQuestion()">Ask</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="idea-output" id="idea-output" style="display:none">
+            <div class="idea-header">
+              <h3>Generated Ideas</h3>
+              <button class="btn-close" onclick="$('#idea-output').style.display='none'">&#10005;</button>
+            </div>
+            <div class="idea-content" id="idea-content"></div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- ── Sub-tab 2: Tech Learning ── -->
+    <div class="discover-subcontent" id="subtab-techlearn">
+      <div class="discover-layout">
+        <aside class="sidebar">
+          <h3>Author Search</h3>
+          <input type="text" id="tl-author" placeholder="e.g. Terence Tao" class="search-input">
+          <div class="search-options">
+            <label>Max results: <span id="tl-max-val">15</span></label>
+            <input type="range" id="tl-max-results" min="5" max="30" value="15">
+          </div>
+          <button class="btn-send" id="btn-author-search" onclick="searchAuthorPapers()" style="width:100%;margin-top:8px">Search Author's Papers</button>
+
+          <h3>Analysis Pool <span class="pool-count" id="tl-pool-count">0</span></h3>
+          <div id="tl-analysis-pool" class="selection-pool">
+            <p class="pool-empty">Select papers from the list</p>
+          </div>
+
+          <div style="margin-top:16px">
+            <button class="btn-send" id="btn-analyze" onclick="analyzeTechniques()" style="width:100%" disabled>Analyze Techniques</button>
+            <button class="btn-clear" id="btn-tl-download" onclick="downloadTechAnalysis()" style="width:100%;margin-top:6px" disabled>Download JSON</button>
+          </div>
+        </aside>
+
+        <main class="discover-main">
+          <div class="paper-list-header">
+            <h3 id="tl-papers-title">Author's Papers</h3>
+            <span id="tl-papers-status" class="papers-status"></span>
+          </div>
+          <div class="paper-list" id="tl-paper-list">
+            <div class="paper-list-empty">
+              <p>Enter an author name and search to see their recent papers</p>
+            </div>
+          </div>
+
+          <div class="idea-output" id="tl-analysis-output" style="display:none">
+            <div class="idea-header">
+              <h3>Technique Analysis</h3>
+              <button class="btn-close" onclick="$('#tl-analysis-output').style.display='none'">&#10005;</button>
+            </div>
+            <div class="idea-content" id="tl-analysis-content"></div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- ── Sub-tab 3: Relations ── -->
+    <div class="discover-subcontent" id="subtab-relations">
+      <div class="discover-layout">
+        <aside class="sidebar">
+          <h3>Co-author Network</h3>
+          <input type="text" id="rel-author" placeholder="Author name..." class="search-input">
+          <button class="btn-send" onclick="buildCoauthorNetwork()" style="width:100%;margin-top:8px">Build Co-author Network</button>
+
+          <h3 style="margin-top:16px">Citation Network</h3>
+          <p style="font-size:0.8rem;color:#888;margin-bottom:6px">Uses papers from Papers or Tech Learning tab</p>
+          <button class="btn-send" onclick="buildCitationNetwork()" style="width:100%">Build Citation Network</button>
+
+          <h3 style="margin-top:16px">Add Papers</h3>
+          <input type="text" id="rel-add-arxiv" placeholder="arXiv ID e.g. 2301.12345" class="search-input">
+          <button class="btn-send" onclick="addPapersToNetwork()" style="width:100%;margin-top:6px">+ Add to Network</button>
+
+          <div style="margin-top:16px">
+            <button class="btn-clear" id="btn-rel-download" onclick="downloadNetworkJSON()" style="width:100%" disabled>Download JSON</button>
+          </div>
+        </aside>
+
+        <main class="discover-main">
+          <div class="network-display" id="network-display">
+            <div class="paper-list-empty">
+              <p>Build a network to visualize academic relationships</p>
+            </div>
+          </div>
+
+          <canvas id="network-canvas" width="800" height="500" style="display:none"></canvas>
+
+          <div class="node-info-panel" id="node-info" style="display:none">
+            <div class="detail-header">
+              <h3 id="node-info-name"></h3>
+              <button class="btn-close" onclick="$('#node-info').style.display='none'">&#10005;</button>
+            </div>
+            <p id="node-info-stats" style="font-size:0.85rem;color:#888;margin:6px 0"></p>
+            <div id="node-info-papers"></div>
+          </div>
+
+          <div class="stats-box" id="network-stats" style="display:none">
+            <span id="stats-nodes"></span> &middot; <span id="stats-edges"></span> &middot; Most connected: <span id="stats-top"></span>
+          </div>
+
+          <details class="accordion" id="graph-data-section" style="display:none">
+            <summary>Graph Data (JSON)</summary>
+            <pre id="graph-data-json" style="max-height:200px;overflow-y:auto"></pre>
+          </details>
+        </main>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════ -->
+  <!-- TAB 2: Note Workshop                  -->
+  <!-- ══════════════════════════════════════ -->
+  <div class="tab-content" id="tab-chat">
+    <div class="note-workshop">
+      <!-- Left: Context + Controls + Agent Chat -->
+      <aside class="note-sidebar">
+        <h3>Context</h3>
+        <div class="note-context-section">
+          <h4>Papers Pool <span class="pool-count" id="note-pool-count">0</span></h4>
+          <div id="note-papers-list" class="note-context-list">
+            <p class="pool-empty">Select papers in Discover tab</p>
+          </div>
+        </div>
+        <div class="note-context-section">
+          <details class="accordion" style="border:none;background:transparent">
+            <summary style="padding:0;color:#4a5568;font-size:0.9rem">Generated Ideas</summary>
+            <div id="note-ideas-preview" class="note-context-list">
+              <p class="pool-empty">Generate ideas in Discover tab first</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="note-generate-section">
+          <textarea id="note-instruction" class="note-instruction-input" placeholder="Instructions for note generation (e.g. focus on theorem 2, include numerical experiments for prime gaps)..." rows="3"></textarea>
+          <button class="btn-send" id="btn-generate-note" onclick="generateNote()" style="width:100%">Generate Note</button>
+        </div>
+
+        <div class="note-chat-section">
+          <h4>Edit with Agent</h4>
+          <div class="note-chat-messages" id="note-chat-messages"></div>
+          <div class="qa-input-row">
+            <input type="text" id="note-chat-input" placeholder="e.g. expand the proof of Lemma 2..." class="search-input">
+            <button class="btn-send" id="btn-note-chat" onclick="sendNoteEdit()">Send</button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Right: Editor + Preview -->
+      <main class="note-main">
+        <div class="note-editor-section">
+          <div class="note-editor-header">
+            <h3>LaTeX Source</h3>
+            <div class="note-editor-actions">
+              <button class="btn-send" id="btn-preview-note" onclick="previewNote()" disabled>Preview</button>
+              <button class="btn-clear" id="btn-download-tex" onclick="downloadTeX()" disabled>Download .tex</button>
+            </div>
+          </div>
+          <textarea id="note-editor" class="note-editor-textarea" placeholder="LaTeX source will appear here after generation..."></textarea>
+        </div>
+        <div class="note-preview-section" id="note-preview-section" style="display:none">
+          <div class="note-preview-header">
+            <h3>Preview</h3>
+          </div>
+          <div id="note-preview" class="note-preview-content"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════ -->
+  <!-- TAB 3: Reports                        -->
+  <!-- ══════════════════════════════════════ -->
+  <div class="tab-content" id="tab-reports">
+    <div class="reports-layout">
+      <div class="report-card">
+        <h3>🧪 Experiment Log</h3>
+        <p id="log-summary">Total: 0 | Success rate: 0%</p>
+        <div id="experiment-table"></div>
+        <button class="btn-send" onclick="refreshLog()">🔄 Refresh</button>
+      </div>
+      <div class="report-card">
+        <h3>📄 Generate Reports</h3>
+        <label><input type="radio" name="fmt" value="markdown" checked> Markdown</label>
+        <label><input type="radio" name="fmt" value="latex"> LaTeX</label>
+        <div class="btn-row">
+          <button class="btn-send" onclick="genReport()">Generate Report</button>
+          <button class="btn-clear" onclick="genNotebook()">Generate Notebook</button>
+        </div>
+        <div id="report-download"></div>
+      </div>
+    </div>
+    <div class="report-card" style="margin-top:16px">
+      <h3>👁 Report Preview</h3>
+      <div id="report-preview"><em>Generate a report to see preview here</em></div>
+    </div>
+  </div>
+
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
