@@ -21,6 +21,29 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 // (messagesDiv and input removed — Chat tab replaced by Note Workshop)
 
+// ── Persistence Helpers ──
+function saveState(key, value) {
+  try { localStorage.setItem('mathagent:' + key, JSON.stringify(value)); } catch {}
+}
+function loadState(key, fallback) {
+  try {
+    const v = localStorage.getItem('mathagent:' + key);
+    return v !== null ? JSON.parse(v) : fallback;
+  } catch { return fallback; }
+}
+
+// ── Theme Toggle ──
+function toggleTheme() {
+  document.documentElement.classList.toggle('dark');
+  const isDark = document.documentElement.classList.contains('dark');
+  localStorage.setItem('mathagent:theme', isDark ? 'dark' : 'light');
+}
+// Apply saved theme on load
+(function() {
+  const saved = localStorage.getItem('mathagent:theme');
+  if (saved === 'dark') document.documentElement.classList.add('dark');
+})();
+
 // ── Sidebar Navigation ──
 $$('.nav-item').forEach(item => {
   item.addEventListener('click', () => {
@@ -28,6 +51,7 @@ $$('.nav-item').forEach(item => {
     $$('.tab-content').forEach(tc => tc.classList.remove('active'));
     item.classList.add('active');
     $(`#tab-${item.dataset.tab}`).classList.add('active');
+    saveState('activeTab', item.dataset.tab);
 
     // Show/hide sub-menu for Paper Search
     const sub = $('#nav-sub-discover');
@@ -46,6 +70,7 @@ $$('.nav-subitem').forEach(btn => {
     $$('.discover-subcontent').forEach(c => c.classList.remove('active'));
     btn.classList.add('active');
     $(`#subtab-${btn.dataset.subtab}`).classList.add('active');
+    saveState('activeSubTab', btn.dataset.subtab);
   });
 });
 
@@ -146,6 +171,7 @@ async function readSSE(resp, onText, onDone) {
 async function searchPapers() {
   const query = $('#search-query').value.trim();
   if (!query) return;
+  saveState('lastSearchQuery', query);
 
   const maxResults = parseInt($('#max-results').value);
   const sortBy = $('#sort-by').value;
@@ -241,6 +267,7 @@ function closeDetail() {
 }
 
 function renderPool() {
+  saveState('selectedPool', selectedPool);
   const container = $('#selection-pool');
   $('#pool-count').textContent = selectedPool.length;
   if (!selectedPool.length) {
@@ -284,7 +311,7 @@ async function analyzePaper() {
   btn.disabled = true;
   btn.textContent = 'Analyzing...';
   $('#paper-analysis-output').style.display = 'block';
-  $('#paper-analysis-content').innerHTML = '<p style="color:#888">Generating analysis...</p>';
+  $('#paper-analysis-content').innerHTML = '<p style="color:var(--text-3)">Generating analysis...</p>';
 
   try {
     const resp = await fetch('/api/analyze-paper', {
@@ -297,7 +324,7 @@ async function analyzePaper() {
       () => { btn.textContent = 'Re-analyze'; btn.disabled = false; }
     );
   } catch (err) {
-    $('#paper-analysis-content').innerHTML = `<p style="color:#f66">Error: ${err.message}</p>`;
+    $('#paper-analysis-content').innerHTML = `<p style="color:var(--red)">Error: ${err.message}</p>`;
     btn.textContent = 'Analyze Paper';
     btn.disabled = false;
   }
@@ -321,7 +348,7 @@ async function askPaperQuestion() {
   // Add assistant placeholder
   const assistantDiv = document.createElement('div');
   assistantDiv.className = 'qa-msg assistant';
-  assistantDiv.innerHTML = '<span style="color:#888">Thinking...</span>';
+  assistantDiv.innerHTML = '<span style="color:var(--text-3)">Thinking...</span>';
   messagesDiv.appendChild(assistantDiv);
   messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
@@ -344,7 +371,7 @@ async function askPaperQuestion() {
     );
     paperQAHistory.push({ role: 'assistant', content: fullText });
   } catch (err) {
-    assistantDiv.innerHTML = `<span style="color:#f66">Error: ${err.message}</span>`;
+    assistantDiv.innerHTML = `<span style="color:var(--red)">Error: ${err.message}</span>`;
   }
   btn.disabled = false;
   input.focus();
@@ -403,11 +430,14 @@ async function generateIdeas() {
     });
     await readSSE(resp,
       text => { contentDiv.innerHTML = renderMarkdown(text); },
-      text => { contentDiv.innerHTML = renderMarkdown(text); }
+      text => {
+        contentDiv.innerHTML = renderMarkdown(text);
+        saveState('lastIdeas', text);
+      }
     );
     outputDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (err) {
-    contentDiv.innerHTML = `<p style="color:#ef4444">Error: ${err.message}</p>`;
+    contentDiv.innerHTML = `<p style="color:var(--red)">Error: ${err.message}</p>`;
   }
   $('#btn-generate').disabled = selectedPool.length === 0;
 }
@@ -424,6 +454,7 @@ $('#tl-author').addEventListener('keydown', e => {
 async function searchAuthorPapers() {
   const author = $('#tl-author').value.trim();
   if (!author) return;
+  saveState('lastAuthorQuery', author);
 
   const maxResults = parseInt($('#tl-max-results').value);
   $('#tl-paper-list').innerHTML = '<div class="paper-list-loading">Searching arXiv...</div>';
@@ -494,6 +525,7 @@ function toggleTechPaper(event, index) {
 }
 
 function renderTechPool() {
+  saveState('techAnalysisPool', techAnalysisPool);
   const container = $('#tl-analysis-pool');
   $('#tl-pool-count').textContent = techAnalysisPool.length;
   if (!techAnalysisPool.length) {
@@ -543,7 +575,7 @@ async function analyzeTechniques() {
     outputDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     $('#btn-tl-download').disabled = false;
   } catch (err) {
-    contentDiv.innerHTML = `<p style="color:#ef4444">Error: ${err.message}</p>`;
+    contentDiv.innerHTML = `<p style="color:var(--red)">Error: ${err.message}</p>`;
   }
   $('#btn-analyze').disabled = techAnalysisPool.length === 0;
 }
@@ -583,7 +615,7 @@ async function buildCoauthorNetwork() {
       papersToUse = data.papers || [];
     } catch (err) {
       $('#network-display').style.display = 'block';
-      $('#network-display').innerHTML = `<p style="color:#ef4444">Error: ${err.message}</p>`;
+      $('#network-display').innerHTML = `<p style="color:var(--red)">Error: ${err.message}</p>`;
       return;
     }
   }
@@ -607,7 +639,7 @@ async function buildCoauthorNetwork() {
     currentNetworkType = 'coauthor';
     renderNetwork();
   } catch (err) {
-    $('#network-display').innerHTML = `<p style="color:#ef4444">Error: ${err.message}</p>`;
+    $('#network-display').innerHTML = `<p style="color:var(--red)">Error: ${err.message}</p>`;
   }
 }
 
@@ -633,7 +665,7 @@ async function buildCitationNetwork() {
     currentNetworkType = 'citation';
     renderNetwork();
   } catch (err) {
-    $('#network-display').innerHTML = `<p style="color:#ef4444">Error: ${err.message}</p>`;
+    $('#network-display').innerHTML = `<p style="color:var(--red)">Error: ${err.message}</p>`;
   }
 }
 
@@ -659,7 +691,7 @@ async function addPapersToNetwork() {
     renderNetwork();
     $('#rel-add-arxiv').value = '';
   } catch (err) {
-    $('#network-display').innerHTML = `<p style="color:#ef4444">Error: ${err.message}</p>`;
+    $('#network-display').innerHTML = `<p style="color:var(--red)">Error: ${err.message}</p>`;
   }
 }
 
@@ -878,10 +910,10 @@ function showNodeInfo(node) {
   const papersHtml = (node.papers || []).map(p => `
     <div class="node-paper-item">
       ${escapeHtml(p.title)} ${p.published ? `(${p.published})` : ''}
-      ${p.arxiv_id ? ` <a href="https://arxiv.org/abs/${p.arxiv_id}" target="_blank" style="color:#667eea;font-size:0.8rem">[arXiv]</a>` : ''}
+      ${p.arxiv_id ? ` <a href="https://arxiv.org/abs/${p.arxiv_id}" target="_blank" style="color:var(--primary);font-size:0.8rem">[arXiv]</a>` : ''}
     </div>
   `).join('');
-  $('#node-info-papers').innerHTML = papersHtml || '<p style="color:#aaa">No paper details available</p>';
+  $('#node-info-papers').innerHTML = papersHtml || '<p style="color:var(--text-3)">No paper details available</p>';
 
   $('#node-info').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -943,11 +975,15 @@ $$('.nav-item').forEach(tab => {
 async function generateNote() {
   const instruction = $('#note-instruction').value.trim();
   const ideasText = $('#idea-content') ? $('#idea-content').textContent.trim() : '';
+  const template = $('#note-template') ? $('#note-template').value : 'research';
+  const templatePrompt = NOTE_TEMPLATES[template] || '';
 
   if (!selectedPool.length && !ideasText && !instruction) {
     alert('Add papers to pool or generate ideas in Discover tab, or provide instructions.');
     return;
   }
+
+  const fullInstruction = templatePrompt ? `${templatePrompt}\n\n${instruction}` : instruction;
 
   const editor = $('#note-editor');
   const btn = $('#btn-generate-note');
@@ -965,7 +1001,7 @@ async function generateNote() {
       body: JSON.stringify({
         papers: selectedPool,
         ideas: ideasText,
-        instruction: instruction,
+        instruction: fullInstruction,
       }),
     });
 
@@ -976,11 +1012,14 @@ async function generateNote() {
         editor.value = clean;
         noteLatex = clean;
         editor.scrollTop = editor.scrollHeight;
+        syncEditorHighlight();
       },
       text => {
         let clean = text.replace(/^```(?:latex)?\n?/gm, '').replace(/\n?```$/gm, '');
         editor.value = clean;
         noteLatex = clean;
+        saveState('noteLatex', noteLatex);
+        syncEditorHighlight();
       }
     );
 
@@ -1011,7 +1050,7 @@ async function sendNoteEdit() {
   // Assistant placeholder
   const assistantDiv = document.createElement('div');
   assistantDiv.className = 'qa-msg assistant';
-  assistantDiv.innerHTML = '<span style="color:#888">Editing...</span>';
+  assistantDiv.innerHTML = '<span style="color:var(--text-3)">Editing...</span>';
   chatMessages.appendChild(assistantDiv);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 
@@ -1036,7 +1075,7 @@ async function sendNoteEdit() {
       text => {
         let clean = text.replace(/^```(?:latex)?\n?/gm, '').replace(/\n?```$/gm, '');
         pendingNoteLatex = clean;
-        assistantDiv.innerHTML = '<span style="color:#d97706">Changes ready — review and accept/reject</span>';
+        assistantDiv.innerHTML = '<span style="color:var(--amber)">Changes ready — review and accept/reject</span>';
       },
       text => {
         let clean = text.replace(/^```(?:latex)?\n?/gm, '').replace(/\n?```$/gm, '');
@@ -1059,9 +1098,9 @@ async function sendNoteEdit() {
       $('#note-preview').innerHTML = renderLaTeXPreview(pendingNoteLatex);
     }
 
-    assistantDiv.innerHTML = '<span style="color:#d97706">Changes ready — accept or reject below</span>';
+    assistantDiv.innerHTML = '<span style="color:var(--amber)">Changes ready — accept or reject below</span>';
   } catch (err) {
-    assistantDiv.innerHTML = `<span style="color:#f66">Error: ${err.message}</span>`;
+    assistantDiv.innerHTML = `<span style="color:var(--red)">Error: ${err.message}</span>`;
   }
 
   btn.disabled = false;
@@ -1072,6 +1111,7 @@ function acceptNoteEdit() {
   if (!pendingNoteLatex) return;
   noteLatex = pendingNoteLatex;
   pendingNoteLatex = '';
+  saveState('noteLatex', noteLatex);
   $('#note-editor').classList.remove('pending-edit');
   $('#note-confirm-bar').style.display = 'none';
 
@@ -1079,7 +1119,7 @@ function acceptNoteEdit() {
   const chatMessages = $('#note-chat-messages');
   const div = document.createElement('div');
   div.className = 'qa-msg assistant';
-  div.innerHTML = '<span style="color:#10b981">Changes accepted</span>';
+  div.innerHTML = '<span style="color:var(--success)">Changes accepted</span>';
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 
@@ -1099,7 +1139,7 @@ function rejectNoteEdit() {
   const chatMessages = $('#note-chat-messages');
   const div = document.createElement('div');
   div.className = 'qa-msg assistant';
-  div.innerHTML = '<span style="color:#ef4444">Changes rejected — reverted to previous version</span>';
+  div.innerHTML = '<span style="color:var(--red)">Changes rejected — reverted to previous version</span>';
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 
@@ -1173,7 +1213,7 @@ $('#note-editor').addEventListener('dblclick', function() {
     if (h.textContent.trim().includes(sectionTitle.trim())) {
       h.scrollIntoView({ behavior: 'smooth', block: 'center' });
       h.style.transition = 'background 0.3s';
-      h.style.background = 'rgba(102,126,234,0.15)';
+      h.style.background = 'var(--primary-bg)';
       setTimeout(() => { h.style.background = ''; }, 1500);
       break;
     }
@@ -1388,7 +1428,7 @@ async function designExperiment() {
   btn.textContent = 'Designing...';
   const output = $('#experiment-plan-output');
   output.style.display = 'block';
-  output.innerHTML = '<p style="color:#888">Designing experiments...</p>';
+  output.innerHTML = '<p style="color:var(--text-3)">Designing experiments...</p>';
 
   try {
     const resp = await fetch('/api/design-experiment', {
@@ -1408,7 +1448,7 @@ async function designExperiment() {
     lastExperimentPlan = fullText;
     $('#btn-gen-code').disabled = false;
   } catch (err) {
-    output.innerHTML = `<p style="color:#ef4444">Error: ${err.message}</p>`;
+    output.innerHTML = `<p style="color:var(--red)">Error: ${err.message}</p>`;
   }
   btn.disabled = false;
   btn.textContent = 'Design';
@@ -1429,7 +1469,7 @@ async function generateCodePlan() {
   const outputDiv = $('#code-plan-output');
   const contentDiv = $('#code-plan-content');
   outputDiv.style.display = 'block';
-  contentDiv.innerHTML = '<p style="color:#888">Generating code...</p>';
+  contentDiv.innerHTML = '<p style="color:var(--text-3)">Generating code...</p>';
 
   try {
     const resp = await fetch('/api/generate-code-plan', {
@@ -1450,7 +1490,7 @@ async function generateCodePlan() {
     $('#btn-download-py').disabled = false;
     $('#btn-download-all').disabled = false;
   } catch (err) {
-    contentDiv.innerHTML = `<p style="color:#ef4444">Error: ${err.message}</p>`;
+    contentDiv.innerHTML = `<p style="color:var(--red)">Error: ${err.message}</p>`;
   }
   btn.disabled = false;
   btn.textContent = 'Generate Code';
@@ -1547,3 +1587,289 @@ async function genNotebook() {
     $('#report-download').innerHTML = `<a href="/api/download?path=${encodeURIComponent(data.filepath)}">Download notebook</a>`;
   }
 }
+
+// ════════════════════════════════════════
+// Auto Research Tab
+// ════════════════════════════════════════
+
+let researchRunning = false;
+
+$('#research-max-iter').addEventListener('input', e => {
+  $('#research-iter-val').textContent = e.target.value;
+});
+$('#research-max-time').addEventListener('input', e => {
+  $('#research-time-val').textContent = e.target.value;
+});
+
+function switchResearchOutput(tab) {
+  $$('.research-output-tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  $('#research-text-output').style.display = tab === 'text' ? 'block' : 'none';
+  $('#research-scratchpad-output').style.display = tab === 'scratchpad' ? 'block' : 'none';
+}
+
+async function startAutonomousResearch() {
+  const goal = $('#research-goal').value.trim();
+  if (!goal) { alert('Please enter a research goal.'); return; }
+
+  const domain = $('#research-domain').value;
+  const maxIter = parseInt($('#research-max-iter').value);
+  const maxTime = parseInt($('#research-max-time').value) * 60;
+
+  researchRunning = true;
+  $('#btn-start-research').disabled = true;
+  $('#btn-stop-research').disabled = false;
+  $('#research-progress').style.display = 'block';
+  $('#research-tasks').style.display = 'block';
+  $('#research-output').style.display = 'block';
+  $('#research-text-output').innerHTML = '';
+  $('#research-scratchpad-output').innerHTML = '';
+  $('#research-task-list').textContent = '';
+  $('#research-phase').textContent = 'STARTING';
+  $('#research-status').textContent = 'Initializing...';
+  $('#research-progress-fill').style.width = '0%';
+
+  let iterationCount = 0;
+
+  try {
+    const resp = await fetch('/api/autonomous', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal, domain, max_iterations: maxIter, max_time: maxTime }),
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') { researchRunning = false; break; }
+
+        try {
+          const evt = JSON.parse(raw);
+
+          if (evt.type === 'phase') {
+            $('#research-phase').textContent = evt.phase;
+            $('#research-status').textContent = evt.status || '';
+            if (evt.phase === 'EXECUTING') {
+              iterationCount++;
+              const pct = Math.min((iterationCount / maxIter) * 100, 100);
+              $('#research-progress-fill').style.width = pct + '%';
+            } else if (evt.phase === 'COMPLETE') {
+              $('#research-progress-fill').style.width = '100%';
+            }
+          }
+
+          if (evt.type === 'plan') {
+            $('#research-task-list').textContent = evt.content;
+          }
+
+          if (evt.type === 'text') {
+            $('#research-text-output').innerHTML = renderMarkdown(evt.content);
+            $('#research-text-output').scrollTop = $('#research-text-output').scrollHeight;
+          }
+
+          if (evt.type === 'scratchpad') {
+            $('#research-scratchpad-output').textContent = evt.content;
+            $('#research-scratchpad-output').scrollTop = $('#research-scratchpad-output').scrollHeight;
+          }
+
+          if (evt.type === 'image') {
+            const img = document.createElement('img');
+            img.src = `data:image/png;base64,${evt.content}`;
+            img.style.maxWidth = '100%';
+            img.style.borderRadius = 'var(--radius-sm)';
+            img.style.margin = '8px 0';
+            $('#research-text-output').appendChild(img);
+          }
+
+          if (evt.type === 'done') {
+            $('#research-phase').textContent = 'COMPLETE';
+            $('#research-status').textContent = 'Research complete';
+            $('#research-progress-fill').style.width = '100%';
+          }
+        } catch {}
+      }
+    }
+  } catch (err) {
+    $('#research-status').textContent = `Error: ${err.message}`;
+  }
+
+  researchRunning = false;
+  $('#btn-start-research').disabled = false;
+  $('#btn-stop-research').disabled = true;
+}
+
+async function stopAutonomousResearch() {
+  try {
+    await fetch('/api/stop-research', { method: 'POST' });
+    $('#research-status').textContent = 'Stopping...';
+  } catch {}
+}
+
+// ════════════════════════════════════════
+// LaTeX Syntax Highlighting
+// ════════════════════════════════════════
+
+function highlightLatex(text) {
+  let html = escapeHtml(text);
+  // Comments (must come first to avoid inner matches)
+  html = html.replace(/(%.*)$/gm, '<span class="hl-comment">$1</span>');
+  // \begin{...} and \end{...}
+  html = html.replace(/(\\(?:begin|end))\{([^}]*)\}/g, '<span class="hl-env">$1{$2}</span>');
+  // Math: $$...$$ and $...$
+  html = html.replace(/(\$\$[\s\S]*?\$\$)/g, '<span class="hl-math">$1</span>');
+  html = html.replace(/(\$[^$\n]+?\$)/g, '<span class="hl-math">$1</span>');
+  // Commands: \word
+  html = html.replace(/(\\[a-zA-Z]+)/g, '<span class="hl-cmd">$1</span>');
+  return html;
+}
+
+function syncEditorHighlight() {
+  const editor = $('#note-editor');
+  const highlight = $('#editor-highlight-code');
+  if (!editor || !highlight) return;
+  highlight.innerHTML = highlightLatex(editor.value) + '\n';
+  // Sync scroll
+  const pre = $('#editor-highlight');
+  pre.scrollTop = editor.scrollTop;
+  pre.scrollLeft = editor.scrollLeft;
+}
+
+// Hook editor events
+(function() {
+  const editor = $('#note-editor');
+  if (!editor) return;
+  editor.addEventListener('input', syncEditorHighlight);
+  editor.addEventListener('scroll', () => {
+    const pre = $('#editor-highlight');
+    pre.scrollTop = editor.scrollTop;
+    pre.scrollLeft = editor.scrollLeft;
+  });
+})();
+
+// ════════════════════════════════════════
+// BibTeX Generation
+// ════════════════════════════════════════
+
+function generateBibTeX() {
+  if (!selectedPool.length) {
+    alert('No papers in selection pool. Add papers in the Paper Search tab first.');
+    return;
+  }
+
+  const entries = selectedPool.map(p => {
+    const firstAuthor = (p.authors && p.authors[0]) ? p.authors[0].split(' ').pop().toLowerCase() : 'unknown';
+    const year = p.published ? p.published.substring(0, 4) : '2024';
+    const titleWord = p.title.split(/\s+/).find(w => w.length > 4)?.toLowerCase() || 'paper';
+    const key = `${firstAuthor}${year}${titleWord}`;
+    const authors = (p.authors || []).join(' and ');
+    const title = p.title || '';
+    const arxivId = p.arxiv_id || '';
+
+    return `@article{${key},
+  title  = {${title}},
+  author = {${authors}},
+  year   = {${year}},
+  eprint = {${arxivId}},
+  archivePrefix = {arXiv}
+}`;
+  });
+
+  const bibtex = entries.join('\n\n');
+
+  // Insert into editor or download
+  const editor = $('#note-editor');
+  if (editor.value.trim()) {
+    // Append to existing note
+    editor.value += '\n\n% ── BibTeX ──\n% ' + bibtex.split('\n').join('\n% ');
+    noteLatex = editor.value;
+    saveState('noteLatex', noteLatex);
+    syncEditorHighlight();
+  }
+
+  // Also offer download
+  const blob = new Blob([bibtex], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'references.bib';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ════════════════════════════════════════
+// Note Template Support
+// ════════════════════════════════════════
+
+const NOTE_TEMPLATES = {
+  'research': '',
+  'survey': 'Generate a SURVEY/REVIEW style note. Include: an introduction summarizing the field, a comparison table of different approaches, per-paper summaries organized by theme, a discussion section, and open problems.',
+  'problem-set': 'Generate a PROBLEM SET style note. Format as a series of numbered problems/exercises with solutions. Include hints, difficulty levels, and connections to the papers.',
+  'proof-sketch': 'Generate a PROOF SKETCH style note. Focus on key theorems and their proof ideas. Use concise notation, include lemma statements, and outline proof strategies without full details.',
+};
+
+// ════════════════════════════════════════
+// Restore Persisted State on Page Load
+// ════════════════════════════════════════
+(function restoreState() {
+  // Restore search queries
+  const lastQuery = loadState('lastSearchQuery', '');
+  if (lastQuery) $('#search-query').value = lastQuery;
+  const lastAuthor = loadState('lastAuthorQuery', '');
+  if (lastAuthor) $('#tl-author').value = lastAuthor;
+
+  // Restore paper pools
+  const savedPool = loadState('selectedPool', []);
+  if (savedPool.length) {
+    selectedPool = savedPool;
+    renderPool();
+    renderPaperList();
+    updateGenerateBtn();
+  }
+  const savedTechPool = loadState('techAnalysisPool', []);
+  if (savedTechPool.length) {
+    techAnalysisPool = savedTechPool;
+    renderTechPool();
+  }
+
+  // Restore note
+  const savedNote = loadState('noteLatex', '');
+  if (savedNote) {
+    noteLatex = savedNote;
+    $('#note-editor').value = savedNote;
+    $('#btn-preview-note').disabled = false;
+    $('#btn-download-tex').disabled = false;
+    syncEditorHighlight();
+  }
+
+  // Restore ideas
+  const savedIdeas = loadState('lastIdeas', '');
+  if (savedIdeas) {
+    $('#idea-output').style.display = 'block';
+    $('#idea-content').innerHTML = renderMarkdown(savedIdeas);
+  }
+
+  // Restore active tab
+  const savedTab = loadState('activeTab', 'discover');
+  if (savedTab !== 'discover') {
+    const tabBtn = $(`.nav-item[data-tab="${savedTab}"]`);
+    if (tabBtn) tabBtn.click();
+  }
+
+  // Restore active subtab
+  const savedSubTab = loadState('activeSubTab', 'papers');
+  if (savedSubTab !== 'papers') {
+    const subBtn = $(`.nav-subitem[data-subtab="${savedSubTab}"]`);
+    if (subBtn) subBtn.click();
+  }
+})();

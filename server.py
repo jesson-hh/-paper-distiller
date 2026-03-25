@@ -130,6 +130,61 @@ async def stop_research():
     return JSONResponse({"status": "stopped"})
 
 
+@app.post("/api/autonomous")
+async def autonomous_research_endpoint(request: Request):
+    """Autonomous research mode — SSE streaming progress."""
+    body = await request.json()
+    goal = body.get("goal", "")
+    domain = body.get("domain", "mathematics")
+    max_iterations = int(body.get("max_iterations", 20))
+    max_time = int(body.get("max_time", 600))
+
+    if not goal:
+        return JSONResponse({"error": "goal is required"}, status_code=400)
+
+    def event_stream():
+        last_text = ""
+        last_plan = ""
+        for phase, status_msg, plan_text, history, scratchpad, images in agent.autonomous_research(
+            goal, domain, max_iterations, max_time
+        ):
+            # Phase/progress update
+            yield f"data: {json.dumps({'type': 'phase', 'phase': phase, 'status': status_msg}, ensure_ascii=False)}\n\n"
+
+            # Plan update
+            if plan_text and plan_text != last_plan:
+                yield f"data: {json.dumps({'type': 'plan', 'content': plan_text}, ensure_ascii=False)}\n\n"
+                last_plan = plan_text
+
+            # Text update
+            current_text = ""
+            if history:
+                for msg in reversed(history):
+                    if msg.get("role") == "assistant":
+                        current_text = msg.get("content", "")
+                        break
+            if current_text and current_text != last_text:
+                yield f"data: {json.dumps({'type': 'text', 'content': current_text}, ensure_ascii=False)}\n\n"
+                last_text = current_text
+
+            # Scratchpad
+            if scratchpad:
+                yield f"data: {json.dumps({'type': 'scratchpad', 'content': scratchpad}, ensure_ascii=False)}\n\n"
+
+            # Images
+            for img_b64 in images:
+                yield f"data: {json.dumps({'type': 'image', 'content': img_b64})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done', 'content': last_text}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ════════════════════════════════════════
 # Paper Discovery + Idea Generation APIs
 # ════════════════════════════════════════

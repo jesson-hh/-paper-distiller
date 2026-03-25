@@ -42,6 +42,20 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         Reports
       </button>
+
+      <button class="nav-item" data-tab="research">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        Auto Research
+      </button>
+    </div>
+
+    <div class="nav-footer">
+      <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">
+        <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <span class="icon-moon">Dark Mode</span>
+        <span class="icon-sun">Light Mode</span>
+      </button>
     </div>
   </nav>
 
@@ -206,7 +220,7 @@
           <button class="btn-send" onclick="buildCoauthorNetwork()" style="width:100%;margin-top:8px">Build Co-author Network</button>
 
           <h3 style="margin-top:16px">Citation Network</h3>
-          <p style="font-size:0.8rem;color:#888;margin-bottom:6px">Uses papers from Papers or Tech Learning tab</p>
+          <p style="font-size:0.8rem;color:var(--text-3);margin-bottom:6px">Uses papers from Papers or Tech Learning tab</p>
           <button class="btn-send" onclick="buildCitationNetwork()" style="width:100%">Build Citation Network</button>
 
           <h3 style="margin-top:16px">Add Papers</h3>
@@ -232,7 +246,7 @@
               <h3 id="node-info-name"></h3>
               <button class="btn-close" onclick="$('#node-info').style.display='none'">&#10005;</button>
             </div>
-            <p id="node-info-stats" style="font-size:0.85rem;color:#888;margin:6px 0"></p>
+            <p id="node-info-stats" style="font-size:0.85rem;color:var(--text-3);margin:6px 0"></p>
             <div id="node-info-papers"></div>
           </div>
 
@@ -266,7 +280,7 @@
         </div>
         <div class="note-context-section">
           <details class="accordion" style="border:none;background:transparent">
-            <summary style="padding:0;color:#4a5568;font-size:0.9rem">Generated Ideas</summary>
+            <summary style="padding:0;color:var(--text-2);font-size:0.9rem">Generated Ideas</summary>
             <div id="note-ideas-preview" class="note-context-list">
               <p class="pool-empty">Generate ideas in Discover tab first</p>
             </div>
@@ -274,8 +288,16 @@
         </div>
 
         <div class="note-generate-section">
+          <label style="font-size:0.78rem;color:var(--text-2);margin-bottom:4px;display:block">Template</label>
+          <select id="note-template" class="search-input" style="margin-bottom:8px">
+            <option value="research">Research Note</option>
+            <option value="survey">Survey / Review</option>
+            <option value="problem-set">Problem Set</option>
+            <option value="proof-sketch">Proof Sketch</option>
+          </select>
           <textarea id="note-instruction" class="note-instruction-input" placeholder="Instructions for note generation (e.g. focus on theorem 2, include numerical experiments for prime gaps)..." rows="3"></textarea>
           <button class="btn-send" id="btn-generate-note" onclick="generateNote()" style="width:100%">Generate Note</button>
+          <button class="btn-clear" id="btn-gen-bibtex" onclick="generateBibTeX()" style="width:100%;margin-top:6px">Generate BibTeX</button>
         </div>
 
         <div class="note-chat-section">
@@ -305,7 +327,10 @@
               <button class="btn-clear" id="btn-download-tex" onclick="downloadTeX()" disabled>Download .tex</button>
             </div>
           </div>
-          <textarea id="note-editor" class="note-editor-textarea" placeholder="LaTeX source will appear here after generation..."></textarea>
+          <div class="editor-highlight-wrap">
+            <pre class="editor-highlight" id="editor-highlight" aria-hidden="true"><code id="editor-highlight-code"></code></pre>
+            <textarea id="note-editor" class="note-editor-textarea" placeholder="LaTeX source will appear here after generation..." spellcheck="false"></textarea>
+          </div>
         </div>
         <div class="note-preview-section" id="note-preview-section" style="display:none">
           <div class="note-preview-header">
@@ -390,6 +415,79 @@
         <div id="report-preview" style="margin-top:12px"><em>Generate a report to see preview</em></div>
       </div>
     </details>
+  </div>
+
+  <!-- ══════════════════════════════════════ -->
+  <!-- TAB 4: Auto Research                  -->
+  <!-- ══════════════════════════════════════ -->
+  <div class="tab-content" id="tab-research">
+    <div class="research-layout">
+      <!-- Config Panel -->
+      <div class="research-config">
+        <h3>Research Goal</h3>
+        <textarea id="research-goal" class="note-instruction-input" placeholder="e.g. Investigate connections between random matrix theory and prime gap distributions..." rows="3"></textarea>
+
+        <div class="research-options">
+          <div>
+            <label>Domain</label>
+            <select id="research-domain" class="search-input">
+              <option value="mathematics">Mathematics</option>
+              <option value="number theory">Number Theory</option>
+              <option value="algebra">Algebra</option>
+              <option value="analysis">Analysis</option>
+              <option value="geometry">Geometry</option>
+              <option value="topology">Topology</option>
+              <option value="combinatorics">Combinatorics</option>
+              <option value="probability">Probability</option>
+              <option value="applied math">Applied Math</option>
+              <option value="computer science">Computer Science</option>
+            </select>
+          </div>
+          <div class="research-budget-row">
+            <div>
+              <label>Max iterations: <span id="research-iter-val">20</span></label>
+              <input type="range" id="research-max-iter" min="5" max="40" value="20">
+            </div>
+            <div>
+              <label>Time limit: <span id="research-time-val">10</span>m</label>
+              <input type="range" id="research-max-time" min="2" max="30" value="10">
+            </div>
+          </div>
+        </div>
+
+        <div class="research-actions">
+          <button class="btn-send" id="btn-start-research" onclick="startAutonomousResearch()" style="flex:1">Start Research</button>
+          <button class="btn-clear" id="btn-stop-research" onclick="stopAutonomousResearch()" style="flex:1" disabled>Stop</button>
+        </div>
+      </div>
+
+      <!-- Progress -->
+      <div class="research-progress" id="research-progress" style="display:none">
+        <div class="research-phase-bar">
+          <span class="research-phase-label" id="research-phase">PLANNING</span>
+          <span class="research-status" id="research-status">Initializing...</span>
+        </div>
+        <div class="research-progress-bar">
+          <div class="research-progress-fill" id="research-progress-fill" style="width:0%"></div>
+        </div>
+      </div>
+
+      <!-- Task List -->
+      <div class="research-tasks" id="research-tasks" style="display:none">
+        <h4>Task Plan</h4>
+        <pre id="research-task-list" class="research-task-pre"></pre>
+      </div>
+
+      <!-- Live Output -->
+      <div class="research-output" id="research-output" style="display:none">
+        <div class="research-output-tabs">
+          <button class="research-output-tab active" onclick="switchResearchOutput('text')">Output</button>
+          <button class="research-output-tab" onclick="switchResearchOutput('scratchpad')">Scratchpad</button>
+        </div>
+        <div class="research-output-content" id="research-text-output"></div>
+        <div class="research-output-content" id="research-scratchpad-output" style="display:none"></div>
+      </div>
+    </div>
   </div>
 
   </div><!-- .app-content -->
