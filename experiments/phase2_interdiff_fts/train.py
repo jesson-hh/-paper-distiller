@@ -111,6 +111,11 @@ def parse_args():
                     help="probability of dropping all conditioning per batch during training, "
                          "enabling classifier-free guidance at inference; 0.0 = disabled, "
                          "0.1 is the standard CFG drop rate")
+    ap.add_argument("--sign-cond", action="store_true",
+                    help="add sign-aware (asymmetric) conditioning branches: negative-clipped "
+                         "mkt and sector factors get their own projections. Breaks the linear "
+                         "symmetry of additive conditioning so the model can learn leverage "
+                         "effect (down-moves -> elevated volatility).")
     return ap.parse_args()
 
 
@@ -181,6 +186,7 @@ def main():
         n_blocks=args.n_blocks,
         n_heads=args.n_heads,
         n_regimes=ds.regime_spec.n_regimes if use_regimes else 0,
+        sign_cond=args.sign_cond,
     ).to(device)
     n_params = count_params(model)
     print(f"[train] model params = {n_params:,}")
@@ -319,6 +325,7 @@ def main():
                 "sector_cond": ds.sector_labels is not None,
                 "cfg_drop": args.cfg_drop,
                 "bf16": args.bf16,
+                "sign_cond": args.sign_cond,
             }
             if use_regimes:
                 save_obj["regime_spec"] = ds.regime_spec.to_dict()

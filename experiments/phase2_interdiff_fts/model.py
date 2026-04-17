@@ -110,8 +110,10 @@ class InterDenoiser(nn.Module):
         ff_mult: int = 4,
         dropout: float = 0.0,
         n_regimes: int = 0,
+        sign_cond: bool = False,
     ):
         super().__init__()
+        self.sign_cond = sign_cond
         self.in_proj = nn.Linear(n_channels, d_model)
         self.t_pos = nn.Parameter(torch.zeros(1, 1, max_length, d_model))
         self.s_pos = nn.Parameter(torch.zeros(1, max_stocks, 1, d_model))
@@ -148,6 +150,21 @@ class InterDenoiser(nn.Module):
             nn.GELU(),
             nn.Linear(d_model, d_model),
         )
+        # Sign-aware (asymmetric) conditioning: extra branches that see ONLY
+        # the negative-clipped factors. Breaks the linear symmetry of the
+        # additive-projection scheme so the model can learn leverage effect
+        # (corr(r_t, r_{t+1}^2) > 0 when r_t < 0).
+        if self.sign_cond:
+            self.mkt_neg_proj = nn.Sequential(
+                nn.Linear(1, d_model),
+                nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
+            self.sector_neg_proj = nn.Sequential(
+                nn.Linear(1, d_model),
+                nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
 
     def forward(
         self,
@@ -168,11 +185,18 @@ class InterDenoiser(nn.Module):
             # mkt_cond: (B, L) -> (B, 1, L, 1) -> project -> (B, 1, L, d) -> broadcast
             me = self.mkt_proj(mkt_cond[:, None, :, None])  # (B, 1, L, d_model)
             h = h + me  # broadcast across N stocks
+            if self.sign_cond:
+                # Negative-clipped: ReLU(-m_t); non-zero only on down-moves
+                neg = torch.clamp(-mkt_cond, min=0.0)
+                h = h + self.mkt_neg_proj(neg[:, None, :, None])
 
         if sector_cond is not None:
             # sector_cond: (B, N, L) — per-stock sector factor
             se = self.sector_proj(sector_cond[:, :, :, None])  # (B, N, L, d_model)
             h = h + se
+            if self.sign_cond:
+                neg_s = torch.clamp(-sector_cond, min=0.0)
+                h = h + self.sector_neg_proj(neg_s[:, :, :, None])
 
         te = sinusoidal_time_embedding(t, self.d_model)
         te = self.time_mlp(te)[:, None, None, :]

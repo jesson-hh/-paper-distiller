@@ -79,6 +79,7 @@ def main():
         n_blocks=cfg["n_blocks"],
         n_heads=cfg["n_heads"],
         n_regimes=regime_spec.n_regimes if regime_spec is not None else 0,
+        sign_cond=ck.get("sign_cond", False),
     ).to(device)
     model.load_state_dict(ck["model"])
     model.eval()
