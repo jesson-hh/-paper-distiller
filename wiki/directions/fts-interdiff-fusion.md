@@ -4,9 +4,9 @@ category: "directions"
 slug: "fts-interdiff-fusion"
 tags: ["finance", "diffusion", "multi-stock", "pattern", "fusion", "applied"]
 refs: ["arxiv:2403.13638", "arxiv:2406.16064"]
-links: ["synthetic-augmentation-financial-timeseries", "fts-diffusion-iclr-2024", "interdiff-inter-stock-correlations", "factor-conditional-interdiff-m4-m5", "factor-conditional-denoising"]
+links: ["synthetic-augmentation-financial-timeseries", "fts-diffusion-iclr-2024", "interdiff-inter-stock-correlations", "factor-conditional-interdiff-m4-m5", "factor-conditional-denoising", "m7-m8-modernization-and-leverage", "a-share-positive-leverage"]
 created: "2026-04-14T11:00:00"
-updated: "2026-04-17T20:40:00"
+updated: "2026-04-17T23:45:00"
 ---
 
 # FTS-Diffusion × InterDiff Fusion
@@ -356,3 +356,17 @@ M5 是当前最好的模型。下一步:CSI800 扩规模 + α-sweep 下游验证
 CSI800(1324 股,过滤后) + 同 M5 配置 + sectors_npz。结果:**架构完美 scale**,ema=0.1325(vs M5 0.1317),同 GPU 占用,训练时间线性。Cross-section gap 在更大池子下**进一步缩小**(market_factor_var gap -0.7% → -0.5%)。全部 7 项 verdict 绿。leverage 仍为负(-0.007),和池子大小无关。
 
 详细数字见 [[factor-conditional-interdiff-m4-m5#m6-csi800-scaling]]。
+
+### 2026-04-17 (续2) — M7 modernization + M8 sign-cond
+
+Engine 升级(M7):加 bf16 mixed precision(+42% step/s,-40% GPU)、DDIM sampler(50 steps 比 DDPM-500 快 10×)、classifier-free guidance(`--cfg-drop 0.1` 训练,`--guidance G` 采样)。bf16 和 DDIM 是**净收益无退化**,CFG 在 g=1.5 时部分改善 leverage(-0.011 → -0.003)但 g≥3.0 严重破坏其他指标。
+
+M8 专攻 leverage:加 `--sign-cond` → 在 `mkt_proj` 和 `sector_proj` 旁加两条**只看负数部分**的独立 MLP 支路(`mkt_neg_proj(relu(-m_t))`、`sector_neg_proj(relu(-s_t))`),打破加法 conditioning 的线性对称性。Smoke test 验证模型确实变非对称(`|f(-m)-f(+m)|.mean()=0.15`),但训完采样 leverage 仍为 -0.007 ~ -0.010,**没修复**。
+
+**根因发现**:真实 CSI800 leverage = **+0.013(正)**,我们所有模型都是经典**负 leverage**(-0.003 ~ -0.011)。**方向反了**,不是幅度问题。A 股的 +0.013 是相对于 Black 1976 经典结果的 sign-flipped 现象,可能和 ±10% 涨跌停、散户追涨、T+1 结算有关。详细分析见 [[a-share-positive-leverage]]。
+
+M8 的经验:**模型有容量但 MSE-on-noise 不提供方向梯度** → 仅加 asymmetric 支路不够,需要显式 leverage aux loss 或两阶段 GARCH+InterDiff。
+
+完整 M7/M8 写作见 [[m7-m8-modernization-and-leverage]]。
+
+**决定**:接受 leverage 小 gap(|0.013| 本身是弱效应),推进 α-sweep 下游验证。leverage 若在下游真影响性能,再回头用 aux loss 或 GARCH。
