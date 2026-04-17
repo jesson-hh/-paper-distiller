@@ -42,6 +42,10 @@ def parse_args():
     ap.add_argument("--guidance", type=float, default=1.0,
                     help="classifier-free guidance scale; 1.0 = no guidance, "
                          ">1 amplifies conditioning (typical 1.5-7.5)")
+    ap.add_argument("--time-range", default=None,
+                    help="override date window for conditioning source, "
+                         "format 'YYYY-MM-DD,YYYY-MM-DD'; useful for "
+                         "pseudo-panels with non-ISO dates")
     return ap.parse_args()
 
 
@@ -109,13 +113,18 @@ def main():
 
     ds_source = None
     if regime_spec is not None or use_mkt_cond or use_sector_cond:
+        if args.time_range:
+            lo, hi = args.time_range.split(",")
+            tr = (lo.strip(), hi.strip())
+        else:
+            tr = ("2015-01-05", cfg.get("train_end", "2022-12-31"))
         ds_source = PanelWindowDataset(
             panel_npz=args.panel,
             length=L,
             k_stocks=K,
             seed=args.seed,
             normalise=True,
-            time_range=("2015-01-05", cfg.get("train_end", "2022-12-31")),
+            time_range=tr,
             regime_window=regime_spec.window if regime_spec else 0,
             n_regimes=regime_spec.n_regimes if regime_spec else 0,
             sectors_npz=args.sectors_npz if use_sector_cond else None,
