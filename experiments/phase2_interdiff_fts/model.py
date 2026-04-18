@@ -148,11 +148,15 @@ class InterDenoiser(nn.Module):
         sign_cond: bool = False,
         lev_cond: bool = False,
         lev_window: int = 5,
+        lev_mode: str = "both",
     ):
         super().__init__()
         self.sign_cond = sign_cond
         self.lev_cond = lev_cond
         self.lev_window = lev_window
+        assert lev_mode in ("both", "pos_only", "neg_only"), \
+            f"lev_mode must be both/pos_only/neg_only, got {lev_mode!r}"
+        self.lev_mode = lev_mode
         self.in_proj = nn.Linear(n_channels, d_model)
         self.t_pos = nn.Parameter(torch.zeros(1, 1, max_length, d_model))
         self.s_pos = nn.Parameter(torch.zeros(1, max_stocks, 1, d_model))
@@ -239,9 +243,17 @@ class InterDenoiser(nn.Module):
                 neg = torch.clamp(-mkt_cond, min=0.0)
                 h = h + self.mkt_neg_proj(neg[:, None, :, None])
             if self.lev_cond:
-                # Realized semi-variance (past window days). Shape (B, L, 2)
-                # -> (B, 1, L, d_model) -> broadcast over N
+                # Realized semi-variance (past window days). Shape (B, L, 2).
+                # For lev_mode="pos_only" zero out rsv_neg channel (and vice
+                # versa for "neg_only") so the model is forced to learn
+                # leverage response from a single direction's semi-variance.
                 lev = compute_rsv_from_mkt(mkt_cond, self.lev_window)
+                if self.lev_mode == "pos_only":
+                    zero = torch.zeros_like(lev[..., 1])
+                    lev = torch.stack([lev[..., 0], zero], dim=-1)
+                elif self.lev_mode == "neg_only":
+                    zero = torch.zeros_like(lev[..., 0])
+                    lev = torch.stack([zero, lev[..., 1]], dim=-1)
                 h = h + self.lev_proj(lev[:, None, :, :])
 
         if sector_cond is not None:

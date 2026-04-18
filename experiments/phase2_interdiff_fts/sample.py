@@ -90,6 +90,7 @@ def main():
         sign_cond=ck.get("sign_cond", False),
         lev_cond=ck.get("lev_cond", False),
         lev_window=ck.get("lev_window", 5),
+        lev_mode=ck.get("lev_mode", "both"),
     ).to(device)
     model.load_state_dict(ck["model"])
     model.eval()

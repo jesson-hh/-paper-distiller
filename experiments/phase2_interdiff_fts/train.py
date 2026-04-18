@@ -124,6 +124,12 @@ def parse_args():
                          "time-lagged asymmetric signal.")
     ap.add_argument("--lev-window", type=int, default=5,
                     help="rolling window (days) for realized semi-variance when --lev-cond")
+    ap.add_argument("--lev-mode", choices=["both", "pos_only", "neg_only"],
+                    default="both",
+                    help="which RSV channels to feed: 'both' = rsv_pos and rsv_neg, "
+                         "'pos_only' = only upside RV (forces the model to learn leverage "
+                         "from past UPward realized variance; attempts to flip A-share "
+                         "positive-leverage direction), 'neg_only' = only downside RV (classical).")
     ap.add_argument("--edm", action="store_true",
                     help="use Student-t EDM diffusion (Karras 2022 + Pandey 2024 "
                          "heavy-tailed prior) instead of DDPM Gaussian. Better tail "
@@ -210,6 +216,7 @@ def main():
         sign_cond=args.sign_cond,
         lev_cond=args.lev_cond,
         lev_window=args.lev_window,
+        lev_mode=args.lev_mode,
     ).to(device)
     n_params = count_params(model)
     print(f"[train] model params = {n_params:,}")
@@ -366,6 +373,7 @@ def main():
                 "sign_cond": args.sign_cond,
                 "lev_cond": args.lev_cond,
                 "lev_window": args.lev_window,
+                "lev_mode": args.lev_mode,
                 "edm": args.edm,
                 "edm_config": {
                     "nu": args.edm_nu,
