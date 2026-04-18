@@ -17,6 +17,7 @@ import torch
 
 from model import InterDenoiser
 from diffusion import GaussianDiffusion
+from edm_diffusion import StudentTEDM
 from panel_windows import PanelWindowDataset
 from regimes import RegimeSpec
 
@@ -32,11 +33,14 @@ def parse_args():
                     help="source panel for borrowing regime/mkt/sector sequences")
     ap.add_argument("--sectors-npz", default="data/csi300_sectors.npz",
                     help="sector labels sidecar; used if ckpt has sector_cond=True")
-    ap.add_argument("--sampler", choices=["ddpm", "ddim"], default="ddpm",
+    ap.add_argument("--sampler", choices=["ddpm", "ddim", "edm"], default="ddpm",
                     help="ddpm = full T-step ancestral sampling; "
-                         "ddim = deterministic fast sampler (10-25x faster)")
+                         "ddim = deterministic fast DDPM sampler; "
+                         "edm = Karras 2022 Heun 2nd-order (used for t-EDM ckpts).")
     ap.add_argument("--ddim-steps", type=int, default=50,
                     help="number of DDIM steps when --sampler=ddim")
+    ap.add_argument("--edm-steps", type=int, default=18,
+                    help="number of Heun steps when --sampler=edm (t-EDM)")
     ap.add_argument("--ddim-eta", type=float, default=0.0,
                     help="DDIM stochasticity; 0 = deterministic, 1 = DDPM-like")
     ap.add_argument("--guidance", type=float, default=1.0,
@@ -88,7 +92,25 @@ def main():
     model.load_state_dict(ck["model"])
     model.eval()
 
-    diff = GaussianDiffusion(T=cfg["T"], device=device)
+    # Auto-detect EDM ckpts
+    is_edm = ck.get("edm", False)
+    if is_edm:
+        edm_cfg = ck.get("edm_config", {})
+        diff = StudentTEDM(
+            sigma_min=edm_cfg.get("sigma_min", 0.002),
+            sigma_max=edm_cfg.get("sigma_max", 80.0),
+            sigma_data=edm_cfg.get("sigma_data", 1.0),
+            nu=edm_cfg.get("nu", 6.0),
+            P_mean=edm_cfg.get("P_mean", -1.2),
+            P_std=edm_cfg.get("P_std", 1.2),
+            device=device,
+        )
+        # If user didn't explicitly pick a sampler, default to edm for edm ckpts
+        if args.sampler == "ddpm":
+            args.sampler = "edm"
+        print(f"[sample] diffusion = t-EDM  nu={edm_cfg.get('nu', 6.0)}")
+    else:
+        diff = GaussianDiffusion(T=cfg["T"], device=device)
 
     L = cfg["length"]
     K = cfg["k"]
@@ -154,7 +176,14 @@ def main():
             if sec_list and use_sector_cond:
                 sector_batch = torch.stack(sec_list, dim=0).to(device)
 
-        if args.sampler == "ddim":
+        if args.sampler == "edm":
+            x = diff.sample_heun(
+                model, shape=(args.batch, K, L, C),
+                steps=args.edm_steps,
+                cond=cond_batch, mkt_cond=mkt_batch, sector_cond=sector_batch,
+                guidance=args.guidance,
+            )
+        elif args.sampler == "ddim":
             x = diff.sample_ddim(
                 model, shape=(args.batch, K, L, C),
                 steps=args.ddim_steps, eta=args.ddim_eta,

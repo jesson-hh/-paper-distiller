@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader
 from panel_windows import PanelWindowDataset
 from model import InterDenoiser, count_params
 from diffusion import GaussianDiffusion
+from edm_diffusion import StudentTEDM
 
 try:
     import psutil
@@ -116,6 +117,19 @@ def parse_args():
                          "mkt and sector factors get their own projections. Breaks the linear "
                          "symmetry of additive conditioning so the model can learn leverage "
                          "effect (down-moves -> elevated volatility).")
+    ap.add_argument("--edm", action="store_true",
+                    help="use Student-t EDM diffusion (Karras 2022 + Pandey 2024 "
+                         "heavy-tailed prior) instead of DDPM Gaussian. Better tail "
+                         "coverage for kurtosis-heavy financial data.")
+    ap.add_argument("--edm-nu", type=float, default=6.0,
+                    help="Student-t degrees of freedom (nu). Smaller = heavier tails. "
+                         "nu=6 -> kurt 3.0; nu=5 -> 6.0; nu=inf -> Gaussian.")
+    ap.add_argument("--edm-sigma-min", type=float, default=0.002)
+    ap.add_argument("--edm-sigma-max", type=float, default=80.0)
+    ap.add_argument("--edm-sigma-data", type=float, default=1.0,
+                    help="preconditioning scale; 1.0 for per-stock z-scored data")
+    ap.add_argument("--edm-P-mean", type=float, default=-1.2)
+    ap.add_argument("--edm-P-std", type=float, default=1.2)
     return ap.parse_args()
 
 
@@ -191,7 +205,22 @@ def main():
     n_params = count_params(model)
     print(f"[train] model params = {n_params:,}")
 
-    diff = GaussianDiffusion(T=args.T, device=device)
+    if args.edm:
+        diff = StudentTEDM(
+            sigma_min=args.edm_sigma_min,
+            sigma_max=args.edm_sigma_max,
+            sigma_data=args.edm_sigma_data,
+            nu=args.edm_nu,
+            P_mean=args.edm_P_mean,
+            P_std=args.edm_P_std,
+            device=device,
+        )
+        print(f"[train] diffusion = t-EDM  nu={args.edm_nu}  "
+              f"sigma range [{args.edm_sigma_min}, {args.edm_sigma_max}]  "
+              f"sigma_data={args.edm_sigma_data}")
+    else:
+        diff = GaussianDiffusion(T=args.T, device=device)
+        print(f"[train] diffusion = DDPM  T={args.T}")
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.steps)
@@ -326,6 +355,15 @@ def main():
                 "cfg_drop": args.cfg_drop,
                 "bf16": args.bf16,
                 "sign_cond": args.sign_cond,
+                "edm": args.edm,
+                "edm_config": {
+                    "nu": args.edm_nu,
+                    "sigma_min": args.edm_sigma_min,
+                    "sigma_max": args.edm_sigma_max,
+                    "sigma_data": args.edm_sigma_data,
+                    "P_mean": args.edm_P_mean,
+                    "P_std": args.edm_P_std,
+                } if args.edm else None,
             }
             if use_regimes:
                 save_obj["regime_spec"] = ds.regime_spec.to_dict()
