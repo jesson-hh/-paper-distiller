@@ -98,6 +98,41 @@ class InterBlock(nn.Module):
         return x
 
 
+def _rolling_causal_mean(x: torch.Tensor, window: int) -> torch.Tensor:
+    """
+    Causal rolling mean: out[t] = mean(x[max(0, t-window+1) : t+1]).
+
+    x: (B, L)
+    returns: (B, L), same shape, using left-zero-padding so very-early positions
+             are averaged over fewer "real" points (approximate bias in first
+             `window` steps is negligible for L >> window).
+    """
+    B, L = x.shape
+    x_pad = F.pad(x.unsqueeze(1), (window - 1, 0), mode="constant", value=0.0)
+    pooled = F.avg_pool1d(x_pad, kernel_size=window, stride=1)  # (B, 1, L)
+    return pooled.squeeze(1)
+
+
+def compute_rsv_from_mkt(mkt_cond: torch.Tensor, window: int = 5) -> torch.Tensor:
+    """
+    HAR-RV-L style asymmetric conditioning from the market factor series.
+
+    Given mkt_cond: (B, L) market factor (equal-weight mean log_ret across
+    the sampled stocks in each window), compute two rolling statistics:
+      rsv_pos[t] = mean over past `window` days of ReLU(+r)^2    -- upside realized variance
+      rsv_neg[t] = mean over past `window` days of ReLU(-r)^2    -- downside realized variance
+
+    Return stacked (B, L, 2). Used as asymmetric conditioning for leverage
+    effect -- past-negative-returns signal is explicit and pre-aggregated.
+    """
+    r = mkt_cond
+    r_pos = F.relu(r)
+    r_neg = F.relu(-r)
+    rsv_pos = _rolling_causal_mean(r_pos * r_pos, window)
+    rsv_neg = _rolling_causal_mean(r_neg * r_neg, window)
+    return torch.stack([rsv_pos, rsv_neg], dim=-1)  # (B, L, 2)
+
+
 class InterDenoiser(nn.Module):
     def __init__(
         self,
@@ -111,9 +146,13 @@ class InterDenoiser(nn.Module):
         dropout: float = 0.0,
         n_regimes: int = 0,
         sign_cond: bool = False,
+        lev_cond: bool = False,
+        lev_window: int = 5,
     ):
         super().__init__()
         self.sign_cond = sign_cond
+        self.lev_cond = lev_cond
+        self.lev_window = lev_window
         self.in_proj = nn.Linear(n_channels, d_model)
         self.t_pos = nn.Parameter(torch.zeros(1, 1, max_length, d_model))
         self.s_pos = nn.Parameter(torch.zeros(1, max_stocks, 1, d_model))
@@ -166,6 +205,16 @@ class InterDenoiser(nn.Module):
                 nn.Linear(d_model, d_model),
             )
 
+        # Leverage conditioning: (B, L, 2) past realized semi-variance
+        # [rsv_pos, rsv_neg], computed deterministically from mkt_cond at
+        # forward time. Explicit time-lagged asymmetric signal (HAR-RV-L).
+        if self.lev_cond:
+            self.lev_proj = nn.Sequential(
+                nn.Linear(2, d_model),
+                nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
+
     def forward(
         self,
         x: torch.Tensor,
@@ -189,6 +238,11 @@ class InterDenoiser(nn.Module):
                 # Negative-clipped: ReLU(-m_t); non-zero only on down-moves
                 neg = torch.clamp(-mkt_cond, min=0.0)
                 h = h + self.mkt_neg_proj(neg[:, None, :, None])
+            if self.lev_cond:
+                # Realized semi-variance (past window days). Shape (B, L, 2)
+                # -> (B, 1, L, d_model) -> broadcast over N
+                lev = compute_rsv_from_mkt(mkt_cond, self.lev_window)
+                h = h + self.lev_proj(lev[:, None, :, :])
 
         if sector_cond is not None:
             # sector_cond: (B, N, L) — per-stock sector factor

@@ -88,6 +88,8 @@ def main():
         n_heads=cfg["n_heads"],
         n_regimes=regime_spec.n_regimes if regime_spec is not None else 0,
         sign_cond=ck.get("sign_cond", False),
+        lev_cond=ck.get("lev_cond", False),
+        lev_window=ck.get("lev_window", 5),
     ).to(device)
     model.load_state_dict(ck["model"])
     model.eval()

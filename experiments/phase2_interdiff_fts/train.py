@@ -117,6 +117,13 @@ def parse_args():
                          "mkt and sector factors get their own projections. Breaks the linear "
                          "symmetry of additive conditioning so the model can learn leverage "
                          "effect (down-moves -> elevated volatility).")
+    ap.add_argument("--lev-cond", action="store_true",
+                    help="add HAR-RV-L realized semi-variance conditioning: rolling rsv_pos, "
+                         "rsv_neg computed from mkt_cond, fed as 2-channel signal through a "
+                         "dedicated projection MLP. Targets leverage effect via explicit "
+                         "time-lagged asymmetric signal.")
+    ap.add_argument("--lev-window", type=int, default=5,
+                    help="rolling window (days) for realized semi-variance when --lev-cond")
     ap.add_argument("--edm", action="store_true",
                     help="use Student-t EDM diffusion (Karras 2022 + Pandey 2024 "
                          "heavy-tailed prior) instead of DDPM Gaussian. Better tail "
@@ -201,6 +208,8 @@ def main():
         n_heads=args.n_heads,
         n_regimes=ds.regime_spec.n_regimes if use_regimes else 0,
         sign_cond=args.sign_cond,
+        lev_cond=args.lev_cond,
+        lev_window=args.lev_window,
     ).to(device)
     n_params = count_params(model)
     print(f"[train] model params = {n_params:,}")
@@ -355,6 +364,8 @@ def main():
                 "cfg_drop": args.cfg_drop,
                 "bf16": args.bf16,
                 "sign_cond": args.sign_cond,
+                "lev_cond": args.lev_cond,
+                "lev_window": args.lev_window,
                 "edm": args.edm,
                 "edm_config": {
                     "nu": args.edm_nu,
