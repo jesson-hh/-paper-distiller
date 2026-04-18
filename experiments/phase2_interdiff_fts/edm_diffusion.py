@@ -57,6 +57,9 @@ class StudentTEDM:
         P_mean: float = -1.2,
         P_std: float = 1.2,
         device: str = "cpu",
+        aux_lev_weight: float = 0.0,
+        aux_lev_target: float = 0.0,
+        aux_lev_low_sigma_only: bool = True,
     ):
         self.sigma_min = float(sigma_min)
         self.sigma_max = float(sigma_max)
@@ -66,6 +69,9 @@ class StudentTEDM:
         self.P_mean = float(P_mean)
         self.P_std = float(P_std)
         self.device = device
+        self.aux_lev_weight = float(aux_lev_weight)
+        self.aux_lev_target = float(aux_lev_target)
+        self.aux_lev_low_sigma_only = bool(aux_lev_low_sigma_only)
         # For convenience
         self._log_sigma_min = math.log(self.sigma_min)
         self._log_sigma_max = math.log(self.sigma_max)
@@ -166,8 +172,39 @@ class StudentTEDM:
         # EDM loss: weight = 1 / c_out^2, but since target_F = (x0 - c_skip*xt) / c_out
         # and D_theta - x0 = c_out * (F_theta - target_F), the weighted MSE
         # (1/c_out^2) * ||D_theta - x0||^2 equals ||F_theta - target_F||^2.
-        loss = F.mse_loss(F_theta, target_F)
-        return loss
+        main_loss = F.mse_loss(F_theta, target_F)
+
+        # Optional auxiliary leverage loss: directly supervise the
+        # corr(r_t, r_{t+1}^2) statistic on the predicted x0. Useful for
+        # nudging A-share positive leverage (target ~ +0.013) since
+        # the noise prediction MSE alone doesn't fix the sign.
+        if self.aux_lev_weight > 0.0:
+            x0_pred = c_skip_v * xt + c_out_v * F_theta  # (B, N, L, C)
+            # Optionally restrict the aux loss to low-sigma examples in the
+            # batch: at high sigma, x0_pred is mostly noise, so the leverage
+            # estimate is meaningless. Mask with sigma < sigma_data.
+            if self.aux_lev_low_sigma_only:
+                mask = (sigma < self.sigma_data).view(B)
+                if mask.any():
+                    x0_pred_for_aux = x0_pred[mask]
+                else:
+                    x0_pred_for_aux = x0_pred  # fall back if no low-sigma in batch
+            else:
+                x0_pred_for_aux = x0_pred
+
+            r = x0_pred_for_aux[..., 0]  # (B', N, L) log_ret
+            # Pool everything: pair (r_t, r_{t+1}^2) across all (B', N) trajectories
+            a = r[..., :-1].reshape(-1)
+            b = (r[..., 1:] ** 2).reshape(-1)
+            a_c = a - a.mean()
+            b_c = b - b.mean()
+            num = (a_c * b_c).mean()
+            den = a_c.std() * b_c.std() + 1e-8
+            lev_pred = num / den
+
+            aux_loss = (lev_pred - self.aux_lev_target) ** 2
+            return main_loss + self.aux_lev_weight * aux_loss
+        return main_loss
 
     # ---------- Sampling ----------
 

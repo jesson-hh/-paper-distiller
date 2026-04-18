@@ -143,6 +143,14 @@ def parse_args():
                     help="preconditioning scale; 1.0 for per-stock z-scored data")
     ap.add_argument("--edm-P-mean", type=float, default=-1.2)
     ap.add_argument("--edm-P-std", type=float, default=1.2)
+    ap.add_argument("--aux-lev-weight", type=float, default=0.0,
+                    help="weight for auxiliary leverage loss "
+                         "(corr(r_t, r_{t+1}^2) -> aux_lev_target). 0 = disabled. "
+                         "Try 100/300/1000 to push A-share positive leverage.")
+    ap.add_argument("--aux-lev-target", type=float, default=0.013,
+                    help="target leverage value (real CSI800 = +0.013).")
+    ap.add_argument("--aux-lev-low-sigma-only", action="store_true", default=True,
+                    help="apply aux leverage loss only when sigma < sigma_data (low-noise batch elements)")
     return ap.parse_args()
 
 
@@ -230,10 +238,14 @@ def main():
             P_mean=args.edm_P_mean,
             P_std=args.edm_P_std,
             device=device,
+            aux_lev_weight=args.aux_lev_weight,
+            aux_lev_target=args.aux_lev_target,
+            aux_lev_low_sigma_only=args.aux_lev_low_sigma_only,
         )
         print(f"[train] diffusion = t-EDM  nu={args.edm_nu}  "
               f"sigma range [{args.edm_sigma_min}, {args.edm_sigma_max}]  "
-              f"sigma_data={args.edm_sigma_data}")
+              f"sigma_data={args.edm_sigma_data}  "
+              f"aux_lev=(w={args.aux_lev_weight}, target={args.aux_lev_target})")
     else:
         diff = GaussianDiffusion(T=args.T, device=device)
         print(f"[train] diffusion = DDPM  T={args.T}")
