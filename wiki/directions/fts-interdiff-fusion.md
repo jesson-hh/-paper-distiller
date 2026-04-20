@@ -4,7 +4,7 @@ category: "directions"
 slug: "fts-interdiff-fusion"
 tags: ["finance", "diffusion", "multi-stock", "pattern", "fusion", "applied"]
 refs: ["arxiv:2403.13638", "arxiv:2406.16064"]
-links: ["synthetic-augmentation-financial-timeseries", "fts-diffusion-iclr-2024", "interdiff-inter-stock-correlations", "factor-conditional-interdiff-m4-m5", "factor-conditional-denoising", "m7-m8-modernization-and-leverage", "a-share-positive-leverage", "alpha-sweep-csi800-m6", "lgbm-alpha-sweep-phase-transition", "recursive-collapse-csi800", "m9-tedm-heavy-tails", "m10-m17-leverage-engineering", "lgbm-alpha-sweep-m16-vs-m6", "wasserstein-generative-regression-framework", "wasserstein-generative-regression", "huang-jian"]
+links: ["synthetic-augmentation-financial-timeseries", "fts-diffusion-iclr-2024", "interdiff-inter-stock-correlations", "factor-conditional-interdiff-m4-m5", "factor-conditional-denoising", "m7-m8-modernization-and-leverage", "a-share-positive-leverage", "alpha-sweep-csi800-m6", "lgbm-alpha-sweep-phase-transition", "recursive-collapse-csi800", "m9-tedm-heavy-tails", "m10-m17-leverage-engineering", "lgbm-alpha-sweep-m16-vs-m6", "m6-vs-m16-supplementary-evaluation", "wasserstein-generative-regression-framework", "wasserstein-generative-regression", "huang-jian"]
 created: "2026-04-14T11:00:00"
 updated: "2026-04-17T14:15:00"
 ---
@@ -448,6 +448,35 @@ M16 在 stylized facts 上全面好过 M6(leverage -0.0037 vs -0.007, skew +0.11
 Leverage sign flip 如果真需要:
 - (A) Per-trajectory aux loss — 未试,可能多样性副作用更小
 - (B) GJR-GARCH 两阶段 — 架构层把正 leverage 的 factor 轨迹当条件喂给 M6-式 unconstrained denoiser
+
+### 2026-04-20 (续) — 上一结论**撤回**: M16 其实是更好的默认
+
+见 [[m6-vs-m16-supplementary-evaluation]]。用户质疑"下游评判标准真的对吗", 驱动了 3 组补充评估:
+
+**补充评估 1: 直接分布度量**(`distribution_eval.py`)
+- **MMD²**(joint, 2000 trajectories): M6 vs M16 都在噪声底内, **持平**
+- **KS per channel**: M16 在 log_hc / log_lc / log_oc 上**胜 3/4**, 仅 log_ret 输 M6
+- **Wasserstein-1**: M16 也**胜 3/4**
+
+**补充评估 2: Augmentation mode**(不替换, 只在 real 上加)
+- aug-mode α=0.25: **M16 显著赢 M6, paired Δ=+0.0047 (t=+2.6, p<0.05)** — 唯一显著的对比格子
+- 其他 α 两者相近或翻转
+
+**补充评估 3: Multi-year**(2024 vs 2023 test)
+- 2024 baseline IC +0.024 (比 2023 高 10×)
+- 高 α (0.75/0.9) 在 2024 下两者都显著 hurt — 经典 model-collapse 征兆
+- M6 "α=0.5 甜点"现象**只在 2023 + replacement 下出现**, 2024 / aug-mode 下消失或翻转
+
+**修正结论**: 之前单 cell 的 "M6 α=0.5 t=1.68" 不足以支撑"M6 更好"。跨 6 个 setup × α 网格, 只有 1 个 cell 统计显著(aug α=0.25, **M16 赢**)。**M16 是更好的默认生成器**:
+- 直接分布度量更准(用户直觉正确)
+- Aug mode 有可证实的增益
+- Stylized facts 全面改善
+- 没有任何 setup 下"明显差"
+
+方法论教训(已写入 [[m6-vs-m16-supplementary-evaluation]]):
+1. 下游 IC 在 0.00x 量级是嘈杂代理, 单 setup 结果不足证明
+2. Replacement ≠ augmentation mode, 奖励不同生成器特性
+3. 多 test 年 + 多 downstream model + 直接分布度量是 generator eval 的最小必要集
 
 ### 2026-04-17 (续3) — M9 候选:WGR 方法学枢轴
 

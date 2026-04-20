@@ -217,24 +217,45 @@ def mix_datasets(
     Xr: np.ndarray, yr: np.ndarray,
     Xs: np.ndarray, ys: np.ndarray,
     alpha: float, rng: np.random.Generator,
+    aug_mode: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Form a training set with fraction alpha from synth, (1-alpha) from real."""
-    n_total = len(yr) + len(ys)
-    # Aim for total set = min(len real, len synth) * (something). Just use len(yr)
+    """
+    Form a training set mixing real and synth.
+
+    aug_mode=False (replacement, default):
+        Training size = len(yr). alpha controls fraction replaced:
+            |real| = (1-alpha) * len(yr)
+            |synth| = alpha * len(yr)
+        At alpha=0.5, half the real data is replaced with synth.
+
+    aug_mode=True (augmentation):
+        Training size = len(yr) + alpha * len(yr). Real is kept whole,
+        synth is added on top:
+            |real| = len(yr)     (all real kept)
+            |synth| = alpha * len(yr)
+        At alpha=0, only real (baseline). At alpha=1, 2x size (1:1 mix).
+    """
     n_want = len(yr)
-    n_synth = int(round(alpha * n_want))
-    n_real = n_want - n_synth
-    # Sample with replacement if needed
+    if aug_mode:
+        n_real = n_want
+        n_synth = int(round(alpha * n_want))
+    else:
+        n_synth = int(round(alpha * n_want))
+        n_real = n_want - n_synth
     if len(yr) >= n_real:
         idx_r = rng.choice(len(yr), n_real, replace=False)
     else:
         idx_r = rng.choice(len(yr), n_real, replace=True)
-    if len(ys) >= n_synth:
-        idx_s = rng.choice(len(ys), n_synth, replace=False)
+    if n_synth > 0:
+        if len(ys) >= n_synth:
+            idx_s = rng.choice(len(ys), n_synth, replace=False)
+        else:
+            idx_s = rng.choice(len(ys), n_synth, replace=True)
+        X = np.concatenate([Xr[idx_r], Xs[idx_s]], axis=0)
+        y = np.concatenate([yr[idx_r], ys[idx_s]], axis=0)
     else:
-        idx_s = rng.choice(len(ys), n_synth, replace=True)
-    X = np.concatenate([Xr[idx_r], Xs[idx_s]], axis=0)
-    y = np.concatenate([yr[idx_r], ys[idx_s]], axis=0)
+        X = Xr[idx_r]
+        y = yr[idx_r]
     perm = rng.permutation(len(y))
     return X[perm], y[perm]
 
@@ -310,6 +331,9 @@ def parse_args():
     ap.add_argument("--num-leaves", type=int, default=63)
     ap.add_argument("--learning-rate", type=float, default=0.05)
     ap.add_argument("--num-rounds", type=int, default=200)
+    ap.add_argument("--aug-mode", action="store_true",
+                    help="augmentation mode: keep all real + add alpha*|real| synth. "
+                         "Default (replacement mode) has fixed total size.")
     ap.add_argument("--out", default="ckpts/alpha_sweep_lgbm.json")
     return ap.parse_args()
 
@@ -344,7 +368,8 @@ def main():
 
         for alpha in alphas:
             t0 = time.time()
-            X_tr, y_tr = mix_datasets(Xr, yr, Xs, ys, alpha, rng)
+            X_tr, y_tr = mix_datasets(Xr, yr, Xs, ys, alpha, rng,
+                                       aug_mode=args.aug_mode)
             train_set = lgb.Dataset(X_tr, label=y_tr,
                                     feature_name=FEATURE_NAMES)
             model = lgb.train(
