@@ -2,6 +2,28 @@
 
 All notable changes documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] — 2026-05-18
+
+### Added
+- **Question-driven multi-round research loop (`paper-distiller-qa`).** Given a research question, the agent autonomously plans search queries, distills relevant papers across multiple rounds, and synthesizes a cited answer document written to `<vault>/surveys/qa-<slug>-<YYYYMMDD>.md`. Bounded by hard budget (rounds/articles/cost) + LLM "is_done" judgment + diminishing-returns detection.
+- **Seven stop reasons** surfaced in the final survey footer + terminal summary: `max_rounds`, `llm_done`, `llm_brake`, `no_candidates`, `max_articles`, `max_cost`, `user_quit`.
+- **`--interactive` mode** pauses after each round and prompts to continue (Y/n/q) — useful for prompt debugging and untrusted-question runs.
+- **`--resume <session-id>` mode** picks up a paused or crashed session from disk-persisted state (`<vault>/.paper_distiller/qa-sessions/<sid>/state.json`).
+- **Audit trail** rendered as a markdown table in every qa-survey doc: per-round query, LLM rationale, new articles, confidence.
+- **`qa/state.py`** — `SessionState` + `RoundRecord` dataclasses with disk persistence.
+- **Two new prompt templates** in `src/paper_distiller/qa/prompts/`: `reflect.md` (LLM judges loop progress) and `answer.md` (LLM synthesizes final cited answer).
+
+### Changed
+- **Pipeline helper promotion.** `pipeline._gather_candidates` and `pipeline._fetch_with_fallback` aliased to public names (`gather_candidates`, `fetch_with_fallback`) for qa-loop reuse. Old underscore names retained for v0.3 back-compat.
+- **`Config` extended** with `qa_max_rounds`, `qa_max_articles`, `qa_max_cost_cny`, `qa_confidence_threshold`, `qa_per_round`, `qa_interactive`, `qa_resume_session_id`, `qa_question` (all defaults; v0.3 callers unaffected). New `load_config_qa()` validates qa-specific kwargs.
+
+### Internal
+- 16 new unit/integration tests (3 state + 3 reflection + 3 answer + 5 loop + 2 cli); total now **77** (was 61 in v0.3).
+- No new runtime dependencies.
+
+### Note on v0.4 gap
+v0.4 was explored as a self-shipped LEANN-backed MCP server, then reverted in favor of recommending [vault-mcp](https://github.com/robbiemu/vault-mcp). See [docs/vault-mcp-recommendation.md](docs/vault-mcp-recommendation.md) and the README "Optional companion" section. No v0.4 tag exists; v0.5 is the next semantic-version bump.
+
 ## [0.3.0] — 2026-05-18
 
 ### Added
