@@ -82,9 +82,20 @@ def run(cfg: Config) -> dict:
     articles = []
     with tempfile.TemporaryDirectory() as tmpdir:
         for paper in top:
-            # Dedup: check both the arxiv-id-based slug convention
-            # (paper-<arxiv_id>) and the title-derived slug. Either match
-            # means we've already distilled this paper.
+            # arxiv-id-based dedup: search vault for any article whose `refs` contains
+            # this arxiv id. Catches duplicates where slug pattern differs from our
+            # conventions (e.g. user hand-wrote the entry with a longer descriptive slug).
+            if not cfg.force:
+                existing = store.find_by_arxiv_id(paper.arxiv_id)
+                if existing is not None:
+                    summary["skipped_dedup"] += 1
+                    if cfg.verbose:
+                        print(f"  skipping arxiv:{paper.arxiv_id} — already in "
+                              f"articles/{existing.slug}.md")
+                    continue
+
+            # Slug-based fallback: legacy entries without refs metadata, or future
+            # callers that bypass our save_entry conventions.
             arxiv_slug = f"paper-{paper.arxiv_id}"
             title_slug = slugify(paper.title)
             if not cfg.force and (

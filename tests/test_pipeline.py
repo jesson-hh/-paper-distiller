@@ -116,3 +116,40 @@ def test_pipeline_dedup_skips_existing(tmp_path, mocker):
     line = json.loads((cfg.vault_path / ".paper_distiller" / "runs.jsonl").read_text().strip().split("\n")[-1])
     assert line["skipped_dedup"] == 1
     assert line["distilled"] == 1
+
+
+def test_pipeline_arxiv_id_dedup_skips_existing(tmp_path, mocker):
+    """If the vault already has an article with refs containing this arxiv id,
+    skip — even if the slug pattern doesn't match. Fixes the v0.1 issue where
+    cofindiff.md and cofindiff-controllable-financial-diffusion.md could both
+    exist for the same arxiv paper."""
+    from paper_distiller.pipeline import run
+    from paper_distiller.vault.store import VaultStore
+    cfg = _config(tmp_path); cfg.vault_path.mkdir()
+    store = VaultStore(cfg.vault_path)
+    # Pre-populate with a hand-written-style entry: slug doesn't match arxiv pattern,
+    # but refs contains the arxiv id of the candidate we'll search for.
+    store.save_entry(
+        title="CoFinDiff (hand-written)",
+        category="articles",
+        body="pre-existing hand-written content",
+        refs=["arxiv:2501.00001"],
+        slug="cofindiff-handwritten",
+    )
+
+    mocker.patch("paper_distiller.pipeline.arxiv_search",
+                 return_value=[_paper(1)])  # _paper(1) has arxiv_id "2501.00001"
+    mocker.patch("paper_distiller.pipeline.rank",
+                 return_value=[_paper(1)])
+    mock_distill = mocker.patch("paper_distiller.pipeline.distill_article")
+    mocker.patch("paper_distiller.pipeline.compose_survey")
+    mocker.patch("paper_distiller.pipeline.LLMClient")
+
+    run(cfg)
+
+    log = (cfg.vault_path / ".paper_distiller" / "runs.jsonl").read_text()
+    line = json.loads(log.strip().split("\n")[-1])
+    assert line["skipped_dedup"] == 1
+    assert line["distilled"] == 0
+    # Critically: distill_article was never called — the skip happened upstream
+    mock_distill.assert_not_called()
