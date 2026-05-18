@@ -48,7 +48,16 @@ def main(argv: list | None = None) -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 2
 
-    summary = pipeline_run(cfg)
+    try:
+        summary = pipeline_run(cfg)
+    except Exception as e:
+        print(f"\nError during pipeline run: {type(e).__name__}: {e}", file=sys.stderr)
+        if args.verbose:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+        else:
+            print("(run with --verbose for full traceback)", file=sys.stderr)
+        return 3
 
     print()
     print(f"  Distilled:     {summary['distilled']}")
