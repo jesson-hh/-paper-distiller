@@ -7,7 +7,8 @@ from paper_distiller.distill.filter import rank
 
 def _papers(n):
     return [
-        ArxivPaper(arxiv_id=f"25{i:02d}.00001", title=f"P{i}", authors=[],
+        ArxivPaper(source="arxiv", paper_id=f"25{i:02d}.00001",
+                   arxiv_id=f"25{i:02d}.00001", title=f"P{i}", authors=[],
                    abstract=f"abstract {i}", pdf_url="", published="2025",
                    categories=[])
         for i in range(n)

@@ -23,6 +23,7 @@ def _config(tmp_path):
 
 def _paper(i):
     return ArxivPaper(
+        source="arxiv", paper_id=f"2501.0000{i}",
         arxiv_id=f"2501.0000{i}", title=f"Paper {i}", authors=["A"],
         abstract=f"abstract {i}", pdf_url=f"https://arxiv.org/pdf/2501.0000{i}.pdf",
         published="2025-01-01", categories=["math.AT"],

@@ -10,14 +10,34 @@ import httpx
 
 
 @dataclass
-class ArxivPaper:
-    arxiv_id: str
+class Paper:
+    """A research paper, sourced from arxiv or Semantic Scholar.
+
+    source: which API produced this record ("arxiv" or "semanticscholar")
+    paper_id: canonical id within source (arxiv_id for arxiv, paperId for SS)
+    arxiv_id / doi / ss_paper_id: cross-source identity (any may be None;
+        at least one is always set)
+    venue / open_access_pdf_url: SS-only enrichment (None when source="arxiv")
+    """
+    source: str
+    paper_id: str
     title: str
     authors: list
     abstract: str
-    pdf_url: str
     published: str
+    pdf_url: str
     categories: list = field(default_factory=list)
+
+    arxiv_id: str | None = None
+    doi: str | None = None
+    ss_paper_id: str | None = None
+
+    venue: str | None = None
+    open_access_pdf_url: str | None = None
+
+
+# Backward-compat alias — v0.2 imports of ArxivPaper continue to work.
+ArxivPaper = Paper
 
 
 _client = None
@@ -41,14 +61,16 @@ def search(query: str, max_results: int = 30) -> list[ArxivPaper]:
     papers = []
     for result in client.results(s):
         arxiv_id = result.entry_id.rsplit("/", 1)[-1].split("v")[0]
-        papers.append(ArxivPaper(
-            arxiv_id=arxiv_id,
+        papers.append(Paper(
+            source="arxiv",
+            paper_id=arxiv_id,
             title=result.title.strip(),
             authors=[a.name for a in result.authors[:10]],
             abstract=result.summary.strip(),
             pdf_url=result.pdf_url,
             published=result.published.isoformat()[:10],
             categories=list(result.categories),
+            arxiv_id=arxiv_id,
         ))
     return papers
 

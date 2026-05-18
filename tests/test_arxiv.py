@@ -42,7 +42,10 @@ def test_download_pdf_writes_file(mocker, tmp_path):
                  return_value=mock_response)
 
     paper = ArxivPaper(
-        arxiv_id="2501.00001", title="t", authors=[],
+        source="arxiv",
+        paper_id="2501.00001",
+        arxiv_id="2501.00001",
+        title="t", authors=[],
         abstract="a", pdf_url="https://arxiv.org/pdf/2501.00001.pdf",
         published="2024-01-01", categories=[],
     )

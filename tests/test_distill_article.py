@@ -8,6 +8,7 @@ from paper_distiller.distill.article import distill, _scrub_invented_links
 
 def _paper():
     return ArxivPaper(
+        source="arxiv", paper_id="2501.00001",
         arxiv_id="2501.00001", title="Test Paper",
         authors=["A", "B"], abstract="abstract text",
         pdf_url="", published="2025-01-01", categories=["math.AT"],

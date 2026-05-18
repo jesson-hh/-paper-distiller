@@ -1,3 +1,3 @@
-from .arxiv import ArxivPaper, search, download_pdf
+from .arxiv import Paper, ArxivPaper, search, download_pdf
 
-__all__ = ["ArxivPaper", "search", "download_pdf"]
+__all__ = ["Paper", "ArxivPaper", "search", "download_pdf"]
