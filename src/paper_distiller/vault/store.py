@@ -244,6 +244,36 @@ class VaultStore:
                 continue
         return None
 
+    def find_by_doi(self, doi: str) -> Entry | None:
+        """Find an article whose `refs` frontmatter contains `doi:<doi>`.
+
+        Mirrors find_by_arxiv_id semantics — only scans `articles/`, returns
+        the first match. Used by the pipeline for DOI-based dedup when a paper
+        is sourced from Semantic Scholar (which always returns DOI when known).
+        """
+        target_ref = f"doi:{doi}"
+        folder = self.root / "articles"
+        if not folder.exists():
+            return None
+        for f in folder.glob("*.md"):
+            try:
+                meta, body = parse_frontmatter(f.read_text(encoding="utf-8"))
+                if target_ref in (meta.get("refs") or []):
+                    return Entry(
+                        slug=meta.get("slug", f.stem),
+                        category=meta.get("category", "articles"),
+                        title=meta.get("title", f.stem),
+                        tags=meta.get("tags") or [],
+                        refs=meta.get("refs") or [],
+                        links=meta.get("links") or [],
+                        created=meta.get("created", ""),
+                        updated=meta.get("updated", ""),
+                        body=body,
+                    )
+            except Exception:
+                continue
+        return None
+
     def list_entries(self, category: str | None = None) -> list:
         cats = [category] if category else list(CATEGORIES)
         for c in cats:

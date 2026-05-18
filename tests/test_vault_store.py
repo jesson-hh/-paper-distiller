@@ -118,3 +118,30 @@ def test_find_by_arxiv_id_only_scans_articles(tmp_vault: Path):
     store.save_entry(title="A survey", category="surveys", body="x",
                      refs=["arxiv:2503.04164"])
     assert store.find_by_arxiv_id("2503.04164") is None
+
+
+def test_find_by_doi_hit(tmp_vault: Path):
+    """find_by_doi mirrors find_by_arxiv_id but matches doi: refs."""
+    store = VaultStore(tmp_vault)
+    store.save_entry(
+        title="A paper with DOI",
+        category="articles",
+        body="x",
+        refs=["doi:10.1234/abcd"],
+        slug="doi-paper",
+    )
+    found = store.find_by_doi("10.1234/abcd")
+    assert found is not None
+    assert found.slug == "doi-paper"
+
+
+def test_find_by_doi_miss_and_articles_only(tmp_vault: Path):
+    """find_by_doi returns None for unknown DOI and ignores non-articles category."""
+    store = VaultStore(tmp_vault)
+    # An article with a different DOI
+    store.save_entry(title="X", category="articles", body="x",
+                     refs=["doi:10.9999/nope"])
+    # A survey with the target DOI — must NOT match
+    store.save_entry(title="S", category="surveys", body="x",
+                     refs=["doi:10.1234/abcd"])
+    assert store.find_by_doi("10.1234/abcd") is None
