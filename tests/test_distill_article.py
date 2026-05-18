@@ -29,7 +29,7 @@ def test_distill_returns_article_result():
         "tags": ["test"],
         "refs": ["arxiv:2501.00001"],
     })
-    result = distill(_paper(), "full text", _index_with([]), llm)
+    result = distill(_paper(), "x" * 600, _index_with([]), llm)  # 600 chars > 500 threshold
     assert result.slug == "ce-shi-lun-wen" or result.slug.startswith("entry-")  # CJK fallback
     assert result.title == "测试论文"
     assert "测试" in result.body
@@ -44,6 +44,23 @@ def test_distill_marks_abstract_only_when_no_full_text():
         "title": "T", "body": "# T\nbody", "tags": [], "refs": [],
     })
     result = distill(_paper(), full_text="", wiki_index=_index_with([]), llm=llm)
+    assert result.depth == "abstract-only"
+
+
+def test_distill_falls_back_to_abstract_for_short_extract():
+    """If full_text is shorter than 500 chars (e.g. PyMuPDF returned garbage
+    from a scanned/corrupt PDF), depth_mode should be 'abstract-only' so the
+    article body gets the ⚠️ callout and the LLM uses the abstract instead."""
+    llm = MagicMock()
+    llm.complete.return_value = json.dumps({
+        "title": "T", "body": "# T\nbody", "tags": [], "refs": [],
+    })
+    result = distill(
+        _paper(),
+        full_text="50 chars of garbage from a corrupt PDF",  # 38 chars, well below 500
+        wiki_index=_index_with([]),
+        llm=llm,
+    )
     assert result.depth == "abstract-only"
 
 

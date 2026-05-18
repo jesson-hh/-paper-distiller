@@ -59,7 +59,7 @@ def distill(
     llm: LLMClient,
 ) -> ArticleResult:
     """LLM-distill one paper into an article entry."""
-    depth_mode = "full-pdf" if full_text else "abstract-only"
+    depth_mode = "full-pdf" if full_text and len(full_text) > 500 else "abstract-only"
     body_input = full_text if depth_mode == "full-pdf" else paper.abstract
 
     index_lines = wiki_index.to_prompt_lines() or ["(vault is empty — no crosslinks yet)"]
