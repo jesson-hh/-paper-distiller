@@ -74,8 +74,10 @@ def load_config(
     """Build a Config from CLI args + env vars."""
     if not topic and not author:
         raise ValueError("Either topic or author must be provided.")
-    if source not in ("arxiv", "ss", "both"):
-        raise ValueError(f"source must be one of arxiv/ss/both (got {source!r})")
+    if source not in ("arxiv", "ss", "openalex", "both", "all"):
+        raise ValueError(
+            f"source must be one of arxiv/ss/openalex/both/all (got {source!r})"
+        )
 
     return Config(
         vault_path=Path(vault_path),
@@ -117,8 +119,10 @@ def load_config_qa(
     the QA-loop specific fields populated."""
     if not question or not question.strip():
         raise ValueError("question is required and must be non-empty")
-    if source not in ("arxiv", "ss", "both"):
-        raise ValueError(f"source must be one of arxiv/ss/both (got {source!r})")
+    if source not in ("arxiv", "ss", "openalex", "both", "all"):
+        raise ValueError(
+            f"source must be one of arxiv/ss/openalex/both/all (got {source!r})"
+        )
     if max_rounds < 1:
         raise ValueError(f"max_rounds must be >= 1 (got {max_rounds})")
     if max_articles < 1:
@@ -174,8 +178,10 @@ def load_config_research(
     """Build a Config for paper-distiller-chat research."""
     if not question or not question.strip():
         raise ValueError("question is required")
-    if source not in ("arxiv", "ss", "both"):
-        raise ValueError(f"source must be one of arxiv/ss/both (got {source!r})")
+    if source not in ("arxiv", "ss", "openalex", "both", "all"):
+        raise ValueError(
+            f"source must be one of arxiv/ss/openalex/both/all (got {source!r})"
+        )
     if max_papers < 1:
         raise ValueError("max_papers must be >= 1")
     if max_cost_cny <= 0:

@@ -27,6 +27,7 @@ from ..agents.curation import CandidateMerger, CandidateRanker
 from ..agents.dag import DAG
 from ..agents.dedup import CandidateDedup
 from ..agents.gap_detector import GapDetector
+from ..agents.opencli_openalex import OpenCLIOpenAlexSearcher
 from ..agents.orchestrator import AgentFailed, Orchestrator
 from ..agents.processor import PaperProcessor
 from ..agents.reflector import ProgressReflector
@@ -108,7 +109,7 @@ async def _phase_seed(cfg, llm, vault, state, renderer, all_articles, next_query
     ctx.shared["next_query"] = query
     # Distill DAG (full v1.0 chain)
     dag = DAG([
-        ArxivSearcher(), SemanticScholarSearcher(),
+        ArxivSearcher(), SemanticScholarSearcher(), OpenCLIOpenAlexSearcher(),
         CandidateMerger(), CandidateDedup(), CandidateRanker(),
         PaperProcessor(), VaultWriter(),
     ])

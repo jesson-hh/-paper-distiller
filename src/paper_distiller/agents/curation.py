@@ -11,7 +11,7 @@ from .base import Context
 
 class CandidateMerger:
     name = "candidate-merger"
-    deps = ["arxiv-searcher", "ss-searcher"]
+    deps = ["arxiv-searcher", "ss-searcher", "openalex-searcher"]
 
     async def run(self, ctx: Context) -> dict:
         # Bypass mode (research-mode Phase 2): candidates injected directly,
@@ -21,7 +21,11 @@ class CandidateMerger:
             return {"candidates": list(ctx.shared["candidates_direct"])}
         a = ctx.shared.get("candidates_arxiv", [])
         b = ctx.shared.get("candidates_ss", [])
+        c = ctx.shared.get("candidates_openalex", [])
+        # Two-pass merge: arxiv wins on tie over ss, then (arxiv+ss) wins over openalex.
         merged = merge_candidates(a, b)
+        if c:
+            merged = merge_candidates(merged, c)
         return {"candidates": merged}
 
 

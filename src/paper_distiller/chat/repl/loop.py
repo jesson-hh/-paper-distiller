@@ -34,9 +34,9 @@ def _confirm(prompt: str) -> bool:
 
 
 _AGENT_DEFAULTS = {
-    "ask": {"max_rounds": 3, "per_round": 2, "max_cost_cny": 5.0, "source": "both"},
-    "distill": {"n": 3, "source": "both"},
-    "research": {"max_papers": 30, "max_cost_cny": 30.0, "duration": "4h", "source": "both"},
+    "ask": {"max_rounds": 3, "per_round": 2, "max_cost_cny": 5.0, "source": "all"},
+    "distill": {"n": 3, "source": "all"},
+    "research": {"max_papers": 30, "max_cost_cny": 30.0, "duration": "4h", "source": "all"},
 }
 
 

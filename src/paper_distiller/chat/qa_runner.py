@@ -21,6 +21,7 @@ from ..agents.base import Context
 from ..agents.curation import CandidateMerger, CandidateRanker
 from ..agents.dag import DAG
 from ..agents.dedup import CandidateDedup
+from ..agents.opencli_openalex import OpenCLIOpenAlexSearcher
 from ..agents.orchestrator import AgentFailed, Orchestrator
 from ..agents.processor import PaperProcessor
 from ..agents.reflector import ProgressReflector
@@ -52,6 +53,7 @@ def _build_distillation_dag() -> DAG:
     return DAG([
         ArxivSearcher(),
         SemanticScholarSearcher(),
+        OpenCLIOpenAlexSearcher(),
         CandidateMerger(),
         CandidateDedup(),
         CandidateRanker(),
@@ -190,7 +192,8 @@ async def _arun_qa_loop(cfg: Config) -> SessionState:
                     query=next_query,
                     rationale=reflection.get("next_query_rationale", ""),
                     candidates_found=len(ctx.shared.get("candidates_arxiv", []))
-                                    + len(ctx.shared.get("candidates_ss", [])),
+                                    + len(ctx.shared.get("candidates_ss", []))
+                                    + len(ctx.shared.get("candidates_openalex", [])),
                     new_articles=len(new_articles),
                     article_slugs=[a.slug for a in new_articles],
                     what_we_know=reflection.get("what_we_know", ""),

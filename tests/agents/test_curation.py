@@ -47,7 +47,23 @@ async def test_merger_handles_empty_sources():
 
 @pytest.mark.asyncio
 async def test_merger_deps():
-    assert set(CandidateMerger().deps) == {"arxiv-searcher", "ss-searcher"}
+    assert set(CandidateMerger().deps) == {
+        "arxiv-searcher", "ss-searcher", "openalex-searcher",
+    }
+
+
+@pytest.mark.asyncio
+async def test_merger_combines_three_sources():
+    """When all 3 source lists are populated, merger should combine them."""
+    a = [_paper("X1")]  # arxiv
+    b = [_paper("Y1")]  # ss
+    c = [_paper("Z1")]  # openalex
+    ctx = _ctx(candidates_arxiv=a, candidates_ss=b, candidates_openalex=c)
+    out = await CandidateMerger().run(ctx)
+    ids = sorted(p.arxiv_id for p in out["candidates"])
+    assert "X1" in ids
+    assert "Y1" in ids
+    assert "Z1" in ids
 
 
 @pytest.mark.asyncio

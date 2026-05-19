@@ -16,6 +16,7 @@ from rich.live import Live
 from ..agents.base import Context
 from ..agents.curation import CandidateMerger, CandidateRanker
 from ..agents.dag import DAG
+from ..agents.opencli_openalex import OpenCLIOpenAlexSearcher
 from ..agents.orchestrator import Orchestrator, AgentFailed
 from ..agents.processor import PaperProcessor
 from ..agents.renderer import ConsoleRenderer
@@ -43,7 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
     distill.add_argument("--author", help="Search author (alternative to --topic)")
     distill.add_argument("--n", type=int, default=3, help="Articles to distill (default 3)")
     distill.add_argument("--pool", type=int, default=30, help="Search pool size (default 30)")
-    distill.add_argument("--source", choices=["arxiv", "ss", "both"], default="both")
+    distill.add_argument(
+        "--source",
+        choices=["arxiv", "ss", "openalex", "both", "all"], default="all",
+    )
     distill.add_argument("--dry-run", action="store_true")
     distill.add_argument("--verbose", "-v", action="store_true")
     distill.add_argument("--model", help="Override PD_MODEL env var")
@@ -57,7 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--max-cost-cny", type=float, default=20.0)
     ask.add_argument("--confidence-threshold", type=int, default=8)
     ask.add_argument("--per-round", type=int, default=2)
-    ask.add_argument("--source", choices=["arxiv", "ss", "both"], default="both")
+    ask.add_argument(
+        "--source",
+        choices=["arxiv", "ss", "openalex", "both", "all"], default="all",
+    )
     ask.add_argument("--interactive", action="store_true")
     ask.add_argument("--dry-run", action="store_true")
     ask.add_argument("--verbose", "-v", action="store_true")
@@ -78,7 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
     research.add_argument("--max-cost-cny", type=float, default=30.0)
     research.add_argument("--duration", default="4h",
                           help="Time budget, e.g. '2h', '30m', '1h30m', '3600s'")
-    research.add_argument("--source", choices=["arxiv", "ss", "both"], default="both")
+    research.add_argument(
+        "--source",
+        choices=["arxiv", "ss", "openalex", "both", "all"], default="all",
+    )
     research.add_argument("--resume", help="Resume session-id")
     research.add_argument("--dry-run", action="store_true")
     research.add_argument("--verbose", "-v", action="store_true")
@@ -104,6 +114,7 @@ def _build_single_pass_dag() -> DAG:
     return DAG([
         ArxivSearcher(),
         SemanticScholarSearcher(),
+        OpenCLIOpenAlexSearcher(),
         CandidateMerger(),
         CandidateRanker(),
         PaperProcessor(),

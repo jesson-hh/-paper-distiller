@@ -36,7 +36,7 @@ class ArxivSearcher:
     deps: list[str] = []
 
     async def run(self, ctx: Context) -> dict:
-        if ctx.cfg.source not in ("arxiv", "both"):
+        if ctx.cfg.source not in ("arxiv", "both", "all"):
             return {"candidates_arxiv": []}
         query = ctx.shared.get("next_query") or ctx.cfg.topic or ctx.cfg.author or ""
         try:
@@ -59,7 +59,7 @@ class SemanticScholarSearcher:
     deps: list[str] = []
 
     async def run(self, ctx: Context) -> dict:
-        if ctx.cfg.source not in ("ss", "both"):
+        if ctx.cfg.source not in ("ss", "both", "all"):
             return {"candidates_ss": []}
         query = ctx.shared.get("next_query") or ctx.cfg.topic or ctx.cfg.author or ""
         try:
