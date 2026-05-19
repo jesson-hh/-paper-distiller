@@ -2,6 +2,39 @@
 
 All notable changes documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] — 2026-05-19
+
+### Added — paper-distiller is now a conversational agent
+
+- **`paper-distiller-chat --vault X`** (no subcommand) now launches a **natural-language conversational agent**. The user only talks; the internal LLM decides which tools to call. No more slash commands, no more flag-juggling. Type `"帮我找几篇关于扩散模型的论文"` and the agent runs `search` → shows abstracts → asks if you want to distill any.
+- **5 LLM-callable tools** exposed via OpenAI-compatible function-calling:
+  - `search(topic, n=10, source="all")` — arxiv + SS + OpenAlex parallel search, returns ranked candidates with abstracts
+  - `distill_by_id(ids, topic=...)` — fetch + distill specific papers into the vault
+  - `show(slug, category="articles")` — read a saved vault entry back into the conversation
+  - `ask(question, max_rounds=3, ...)` — multi-round QA loop
+  - `research(question, duration="2h", ...)` — long-running autonomous deep-research mode
+- **`LLMClient.complete_with_tools(messages, tools)`** — OpenAI-compatible function-calling against Aliyun Bailian's qwen-plus (and any other tool-calling-capable provider).
+- **`AgentLoop`** — stateful conversation manager with message history, tool dispatch, per-turn tool-call safety cap (10), oversized-result truncation, on-tool-call hooks for status display.
+- **Chinese system prompt** by default — tells the LLM about all 5 tools, when to use which, budget defaults, and to reply concisely in Chinese.
+
+### Changed
+
+- **`paper-distiller-chat --vault X`** (no subcommand) now launches the **agent loop**, not the slash-command REPL. Behavior change for users who relied on the REPL as the default.
+- **Pre-v1.4 slash-command REPL** is still available as `paper-distiller-chat legacy-repl --vault X`. Same intent-router + slot-filling logic, just opt-in now.
+
+### Internal
+
+- **35 new tests** (16 for agent_tools, 15 for agent_loop, 4 for CLI dispatch). Total: **259** (was 224).
+- `_parse_duration` extracted from `chat/cli.py` into shared `chat/_durations.py` to break a circular import between `cli.py` ↔ `agent_loop.py` ↔ `agent_tools.py`.
+- `_NoDepsProcessor` subclass replaces the previous `processor.deps = []` instance-mutation hack in the two-phase distill flow.
+- Agent loop's tool-call dispatcher catches all exceptions inside each wrapper and converts to `{"error": "<Type>: <msg>"}` — the LLM sees structured errors and can decide whether to retry.
+
+### Backward compatibility
+
+- All existing subcommands (`distill` / `browse` / `ask` / `resume` / `research`) work unchanged. Scripts and CI keep working.
+- `paper-distiller` (the single-pass entry point) is unchanged.
+- Old REPL accessible via `legacy-repl` subcommand.
+
 ## [1.3.0] — 2026-05-19
 
 ### Added
