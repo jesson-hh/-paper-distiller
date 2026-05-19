@@ -38,7 +38,7 @@ def test_repl_dispatch_unknown_slash_prints_error(tmp_path, capsys):
 
 
 def test_repl_dispatch_natural_language_uses_router(mocker, tmp_path, capsys, monkeypatch):
-    """NL input → IntentRouter.classify → proposal print → user cancels → no action."""
+    """NL input → IntentRouter.classify → slot-fill prompts → user cancels → no action."""
     monkeypatch.setenv("PD_API_KEY", "sk-test")
     monkeypatch.setenv("PD_BASE_URL", "https://x/v1")
     monkeypatch.setenv("PD_MODEL", "qwen-plus")
@@ -49,7 +49,9 @@ def test_repl_dispatch_natural_language_uses_router(mocker, tmp_path, capsys, mo
         "missing_params": ["max_rounds", "per_round", "max_cost_cny"],
         "confidence": 8,
     }
-    # Mock the confirmation prompt to return False (cancel)
+    # Mock the slot-fill input() → "" (use default for each slot)
+    mocker.patch("builtins.input", return_value="")
+    # Mock final confirm to False (cancel before dispatch)
     mocker.patch("paper_distiller.chat.repl.loop._confirm", return_value=False)
     mocker.patch("paper_distiller.chat.repl.loop.LLMClient")
     from paper_distiller.chat.repl.loop import REPL
@@ -58,6 +60,39 @@ def test_repl_dispatch_natural_language_uses_router(mocker, tmp_path, capsys, mo
     captured = capsys.readouterr()
     assert "Intent: ask" in captured.out
     assert "question" in captured.out.lower()
+    # Cancellation should be printed
+    assert "cancelled" in captured.out.lower()
+
+
+def test_repl_dispatch_natural_language_slot_filling(mocker, tmp_path, capsys, monkeypatch):
+    """NL → router → interactive slot-fill (user types values) → confirm → dispatch."""
+    monkeypatch.setenv("PD_API_KEY", "sk-test")
+    monkeypatch.setenv("PD_BASE_URL", "https://x/v1")
+    monkeypatch.setenv("PD_MODEL", "qwen-plus")
+    fake_router_class = mocker.patch("paper_distiller.chat.repl.loop.IntentRouter")
+    fake_router_class.return_value.classify.return_value = {
+        "command": "ask",
+        "params": {"question": "why diffusion?"},
+        "missing_params": ["max_rounds", "per_round", "max_cost_cny"],
+        "confidence": 8,
+    }
+    # User types: 5 (max_rounds), "" use default (per_round=2), 10.0 (max_cost)
+    mocker.patch("builtins.input", side_effect=["5", "", "10.0"])
+    mocker.patch("paper_distiller.chat.repl.loop._confirm", return_value=True)
+    mocker.patch("paper_distiller.chat.repl.loop.LLMClient")
+    fake_cli_main = mocker.patch("paper_distiller.chat.cli.main", return_value=0)
+    from paper_distiller.chat.repl.loop import REPL
+    r = REPL(vault_path=tmp_path)
+    r.dispatch_one("why diffusion?")
+    # cli.main should have been called with the user-supplied values
+    fake_cli_main.assert_called_once()
+    argv = fake_cli_main.call_args.args[0]
+    assert "--max-rounds" in argv
+    assert "5" in argv
+    assert "--per-round" in argv
+    assert "2" in argv  # default used
+    assert "--max-cost-cny" in argv
+    assert "10.0" in argv
 
 
 def test_repl_dispatch_nl_show_routes_to_handle_show(mocker, tmp_path, capsys, monkeypatch):

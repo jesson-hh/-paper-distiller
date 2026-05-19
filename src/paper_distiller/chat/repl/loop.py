@@ -34,9 +34,29 @@ def _confirm(prompt: str) -> bool:
 
 
 _AGENT_DEFAULTS = {
-    "ask": {"max_rounds": 3, "per_round": 2, "max_cost_cny": 5.0},
-    "distill": {"n": 3},
+    "ask": {"max_rounds": 3, "per_round": 2, "max_cost_cny": 5.0, "source": "both"},
+    "distill": {"n": 3, "source": "both"},
+    "research": {"max_papers": 30, "max_cost_cny": 30.0, "duration": "4h", "source": "both"},
 }
+
+
+def _prompt_slot(name: str, default):
+    """Ask the user for one slot value with type-coerced default fallback.
+
+    Returns the filled value, or raises ValueError on type mismatch,
+    or raises KeyboardInterrupt if the user cancels.
+    """
+    default_str = f" (default {default})" if default is not None else ""
+    user_input = input(f"  {name}{default_str}: ").strip()
+    if not user_input:
+        return default
+    if isinstance(default, bool):
+        return user_input.lower() in ("y", "yes", "true", "1")
+    if isinstance(default, int) and not isinstance(default, bool):
+        return int(user_input)
+    if isinstance(default, float):
+        return float(user_input)
+    return user_input
 
 
 def _format_proposal(parsed: dict) -> str:
@@ -133,19 +153,34 @@ class REPL:
         except RoutingError as e:
             print(f"Intent routing failed: {e}")
             return None
-        print(_format_proposal(parsed))
-        if not _confirm("> "):
-            print("  (cancelled)")
-            return None
-        # Apply defaults for missing params
+
         cmd = parsed["command"]
         params = dict(parsed["params"])
-        for k in parsed["missing_params"]:
-            if k in _AGENT_DEFAULTS.get(cmd, {}):
-                params[k] = _AGENT_DEFAULTS[cmd][k]
 
-        # `show` is a read-only command — dispatch directly via handle_show,
-        # NOT through cli.main (cli has no `show` subcommand).
+        # Show what router extracted
+        print(f"[intent-router] Intent: {cmd}  | confidence {parsed.get('confidence', '?')}")
+        for k, v in params.items():
+            print(f"  {k}: {v}")
+
+        # Interactive slot-filling: ask the user for each missing param,
+        # showing the default. Empty input → use default. Type-coerce.
+        defaults = _AGENT_DEFAULTS.get(cmd, {})
+        if parsed["missing_params"]:
+            print()
+            for param_name in parsed["missing_params"]:
+                default = defaults.get(param_name)
+                try:
+                    value = _prompt_slot(param_name, default)
+                except (KeyboardInterrupt, EOFError):
+                    print("\n  (cancelled)")
+                    return None
+                except ValueError as e:
+                    print(f"  Error: {e}. Cancelling.")
+                    return None
+                if value is not None:
+                    params[param_name] = value
+
+        # `show` is read-only — dispatch directly, NOT via cli.main
         if cmd == "show":
             slug = params.get("slug")
             if not slug:
@@ -154,9 +189,15 @@ class REPL:
             print(handle_show(self.vault_path, slug))
             return None
 
-        # Build argv and run via cli.main for distill/ask/resume
+        # Build argv, show preview, ask final confirm, dispatch
         argv = self._params_to_argv(cmd, params)
-        return self._dispatch_action(cmd, argv[1:])  # skip leading cmd
+        preview = f"{cmd} --vault \"{self.vault_path}\" " + " ".join(argv[1:])
+        print()
+        print(f"→ {preview}")
+        if not _confirm("Run? [Y/n]: "):
+            print("  (cancelled)")
+            return None
+        return self._dispatch_action(cmd, argv[1:])
 
     def _params_to_argv(self, cmd, params):
         """Translate a {name: value} param dict into CLI args (after the subcommand name)."""
@@ -178,6 +219,17 @@ class REPL:
         elif cmd == "resume":
             if "session_id" in params:
                 argv += ["--session-id", str(params["session_id"])]
+        elif cmd == "research":
+            if "question" in params:
+                argv += ["--question", str(params["question"])]
+            if "max_papers" in params:
+                argv += ["--max-papers", str(params["max_papers"])]
+            if "max_cost_cny" in params:
+                argv += ["--max-cost-cny", str(params["max_cost_cny"])]
+            if "duration" in params:
+                argv += ["--duration", str(params["duration"])]
+            if "source" in params:
+                argv += ["--source", str(params["source"])]
         return argv
 
     def run(self):
