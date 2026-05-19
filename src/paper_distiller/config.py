@@ -39,7 +39,7 @@ class Config:
     qa_max_articles: int = 15
     qa_max_cost_cny: float = 20.0
     qa_confidence_threshold: int = 8
-    qa_per_round: int = 2
+    qa_per_round: int | None = None
     qa_interactive: bool = False
     qa_resume_session_id: str | None = None
     qa_question: str | None = None

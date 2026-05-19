@@ -20,7 +20,7 @@ def _paper(pid, doi=None):
 def _ctx(**shared):
     """Note: cfg.topic defaults to None; tests that exercise ranker set it as needed."""
     return Context(
-        cfg=SimpleNamespace(top_n=2, qa_per_round=2, topic=None),
+        cfg=SimpleNamespace(top_n=2, qa_per_round=None, topic=None),
         llm=MagicMock(), vault=MagicMock(),
         shared=dict(shared),
         on_status=lambda *a, **kw: None,
@@ -82,3 +82,27 @@ async def test_ranker_uses_qa_per_round_when_set(mocker):
 @pytest.mark.asyncio
 async def test_ranker_deps():
     assert CandidateRanker().deps == ["candidate-merger"]
+
+
+@pytest.mark.asyncio
+async def test_ranker_single_pass_uses_top_n_when_qa_per_round_is_none(mocker):
+    """Regression: with qa_per_round=None (single-pass default), top_n must win."""
+    candidates = [_paper(f"X{i}") for i in range(10)]
+    captured = {}
+    def _capture(candidates, topic, top_n, llm):
+        captured["top_n"] = top_n
+        return candidates[:top_n]
+    mocker.patch("paper_distiller.agents.curation.rank", side_effect=_capture)
+    ctx = _ctx(candidates=candidates)
+    ctx.cfg.top_n = 7
+    # qa_per_round already None from _ctx default
+    await CandidateRanker().run(ctx)
+    assert captured["top_n"] == 7
+
+
+@pytest.mark.asyncio
+async def test_ranker_returns_empty_for_no_candidates():
+    """Short-circuit: no candidates → no LLM call, return empty."""
+    ctx = _ctx()  # no candidates in shared
+    out = await CandidateRanker().run(ctx)
+    assert out == {"ranked": []}
