@@ -2,6 +2,30 @@
 
 All notable changes documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] — 2026-05-19
+
+### Added — Claude Code-style UX + agent control
+
+- **`ask_user` tool** — sixth LLM-callable tool. Lets the agent pause and ask the user a multi-choice question (2-4 options) for genuine ambiguity (which papers to distill, budget confirmation, vague-intent disambiguation). System prompt steers it away from trivial confirmations.
+- **Slash commands** alongside natural language: `/clear /cost /help /show /history /exit /auto`. They bypass the LLM entirely — `/cost` shows session token + ¥ totals, `/show <slug>` reads a vault entry directly, `/auto` toggles plan-mode previews off.
+- **Streaming text output** via `LLMClient.complete_with_tools_stream()`. Aliyun Bailian SSE chunks are accumulated into the assistant's reply incrementally. Tool calls assembled from chunked function-name + arguments. Streaming is on by default; the loop falls back to the non-streaming path for providers that don't implement it.
+- **Session cost display** — every turn ends with `tokens in/out: X / Y  ·  ¥Z.ZZZZ`. New `llm/pricing.py` table covers qwen-plus / qwen-turbo / qwen-max / deepseek-chat / deepseek-reasoner; unknown models log a warning and use a conservative default. Override per-session via `PD_PRICE_IN_CNY_PER_M` / `PD_PRICE_OUT_CNY_PER_M`.
+- **Plan mode** — when a tool's estimated cost exceeds `PD_PLAN_THRESHOLD_CNY` (default ¥10), the loop prints a structured preview card (tool name + arguments + estimated budget) and waits up to 5 seconds for the user to press Enter (proceed) or `q` (cancel). Auto-proceeds on timeout. Always-skip via `/auto` slash command.
+- **Ctrl-C abort state machine** — single press cancels the currently running tool (the loop posts a cancelled-result to the LLM, conversation continues); two presses within 1.5s exits the REPL.
+
+### Internal
+
+- New files: `llm/pricing.py`, `chat/slash_commands.py`, `chat/cost_estimator.py`, `chat/plan_mode.py`, `chat/abort.py`.
+- `LLMClient` gains `complete_with_tools_stream()`, `StreamChunk` dataclass, and `estimated_cost_cny` property.
+- `AgentLoop.send()` rewritten to consume StreamChunks and accumulate tool calls across chunks. `_stream_one_response`, `_render_text_delta`, `_end_text_render`, `_execute_one_tool_call` split out for testability.
+- **+48 new tests**: 5 pricing + 4 streaming + 11 slash + 6 ask_user + 12 plan-mode + 5 abort + 5 agent_loop integration. Total: **307** (was 259).
+
+### Backward compatibility
+
+- All 5 existing tools unchanged. `ask_user` is additive (6th tool).
+- `LLMClient.complete_with_tools()` retained for non-streaming callers and tests.
+- All single-shot CLI subcommands (`distill / browse / ask / resume / research / legacy-repl`) unchanged.
+
 ## [1.4.0] — 2026-05-19
 
 ### Added — paper-distiller is now a conversational agent

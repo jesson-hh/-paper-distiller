@@ -3,4 +3,4 @@ import paper_distiller
 
 
 def test_package_imports():
-    assert paper_distiller.__version__ == "1.4.0"
+    assert paper_distiller.__version__ == "1.5.0"
