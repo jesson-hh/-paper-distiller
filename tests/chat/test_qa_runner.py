@@ -72,9 +72,16 @@ def _common_mocks(mocker, reflection_responses):
         "paper_distiller.agents.processor.fetch_with_fallback",
         return_value="x" * 600,
     )
+    def _make_article(paper, full_text, wiki_index, llm):
+        from paper_distiller.distill.article import ArticleResult
+        return ArticleResult(
+            slug=f"a-{paper.arxiv_id}", title=f"T-{paper.arxiv_id}",
+            body="b", tags=[], refs=[f"arxiv:{paper.arxiv_id}"],
+            depth="full-pdf",
+        )
     mocker.patch(
         "paper_distiller.agents.processor.distill_article",
-        side_effect=lambda paper, full_text, wiki_index, llm: _article(f"a-{paper.arxiv_id}"),
+        side_effect=_make_article,
     )
     mocker.patch(
         "paper_distiller.agents.processor.load_index",

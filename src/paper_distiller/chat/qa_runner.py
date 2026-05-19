@@ -162,30 +162,27 @@ async def _arun_qa_loop(cfg: Config) -> SessionState:
 
                 # 4. Process this round's results
                 articles_this_round = ctx.shared.get("articles", [])
-                ranked_this_round = ctx.shared.get("ranked", [])
                 prior_slugs = {a.slug for a in state.articles_distilled}
                 new_articles = [a for a in articles_this_round if a.slug not in prior_slugs]
-                # Record what we tried this round in articles_seen_ids so the
-                # next round's dedup can filter it out. Tracks at the paper
-                # level (arxiv_id / doi / paper_id), independent of whether
-                # the distillation actually succeeded — re-trying the same
-                # paper would just hit the same failure mode.
-                for paper in ranked_this_round:
-                    pid = paper.arxiv_id or paper.doi or paper.paper_id
-                    if pid:
-                        state.articles_seen_ids.add(pid)
-                if not new_articles:
-                    # No new articles this round. Two scenarios:
-                    # (a) dedup wiped candidates upstream (ctx.shared["candidates"] is []) —
-                    #     we have nothing new to chase, stop with no_candidates.
-                    # (b) ranked was empty (candidates didn't survive ranking),
-                    #     same conclusion.
-                    # (c) ranked papers all yielded slugs we've already saved
-                    #     (re-distilled an article from a prior round): the
-                    #     search returned overlap-only papers, also no_candidates.
+
+                # Only stop with no_candidates if dedup wiped the input pool —
+                # NOT on transient per-paper distill failures (v0.5 fault tolerance).
+                candidates_after_dedup = ctx.shared.get("candidates", [])
+                if not candidates_after_dedup:
                     state.stop_reason = "no_candidates"
                     break
+
                 state.articles_distilled.extend(new_articles)
+                # Update seen_ids from successfully-distilled articles' refs
+                # (matches v0.5: only mark a paper "seen" if distill succeeded).
+                for article in new_articles:
+                    for ref in article.refs:
+                        if ref.startswith("arxiv:"):
+                            state.articles_seen_ids.add(ref[6:])
+                            break
+                        if ref.startswith("doi:"):
+                            state.articles_seen_ids.add(ref[4:])
+                            break
 
                 # 5. Record round in history
                 state.history.append(RoundRecord(
