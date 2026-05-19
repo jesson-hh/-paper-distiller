@@ -37,7 +37,7 @@ from ..agents.writer import SurveyComposer, VaultWriter
 from ..config import load_config, load_config_qa, load_config_research
 from ..llm.openai_compatible import LLMClient
 from ..vault.store import VaultStore
-from .cli import _parse_duration
+from ._durations import parse_duration as _parse_duration
 from .qa_runner import run_qa_loop
 from .research_runner import run_research_loop
 

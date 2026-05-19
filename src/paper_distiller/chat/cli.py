@@ -1,13 +1,21 @@
 """paper-distiller-chat entry point.
 
-In Plan 1, supports only the one-shot `distill` subcommand. Plan 2 adds
-`ask` + `resume`; Plan 3 adds the interactive REPL.
+v1.4 (default): natural-language conversational agent. Invoking
+`paper-distiller-chat --vault X` (no subcommand) launches the AgentLoop —
+the LLM decides which tools to call based on user input.
+
+Legacy access: `paper-distiller-chat legacy-repl --vault X` opens the
+pre-v1.4 slash-command REPL for users who prefer explicit control.
+
+The single-shot subcommands (distill / browse / ask / resume / research)
+remain for scripts and CI.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 
 from rich.console import Console
@@ -25,6 +33,8 @@ from ..agents.writer import SurveyComposer, VaultWriter
 from ..config import load_config, load_config_qa, load_config_research
 from ..llm.openai_compatible import LLMClient
 from ..vault.store import VaultStore
+from ._durations import parse_duration as _parse_duration_impl
+from .agent_loop import AgentLoop
 from .qa_runner import run_qa_loop
 from .repl.loop import REPL
 from .research_runner import run_research_loop
@@ -114,20 +124,21 @@ def build_parser() -> argparse.ArgumentParser:
     research.add_argument("--verbose", "-v", action="store_true")
     research.add_argument("--model")
     research.add_argument("--provider")
+
+    legacy = sub.add_parser(
+        "legacy-repl",
+        help="Pre-v1.4 slash-command REPL (intent router + slot filling). "
+             "Default mode is the conversational agent.",
+    )
+    legacy.add_argument("--vault", required=True)
+    legacy.add_argument("--model")
+    legacy.add_argument("--provider")
     return p
 
 
-def _parse_duration(s: str) -> int:
-    """Parse '4h' / '30m' / '1h30m' / '3600s' → seconds."""
-    import re
-    m = re.match(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$", s.strip())
-    if not m or not any(m.groups()):
-        raise ValueError(f"invalid duration: {s!r}")
-    h, mn, sc = (int(g or 0) for g in m.groups())
-    total = h * 3600 + mn * 60 + sc
-    if total < 60:
-        raise ValueError(f"duration too short: {total}s (min 60s)")
-    return total
+# Kept as a module-level name for backward compat with any tests / scripts
+# that import it from this file. Real implementation lives in ._durations.
+_parse_duration = _parse_duration_impl
 
 
 def _build_single_pass_dag() -> DAG:
@@ -540,6 +551,49 @@ def _run_research(args) -> int:
     return 0
 
 
+def _run_agent(args) -> int:
+    """Launch the v1.4 conversational AgentLoop."""
+    api_key = os.getenv("PD_API_KEY")
+    base_url = os.getenv("PD_BASE_URL")
+    model = getattr(args, "model", None) or os.getenv("PD_MODEL")
+    if not api_key or not base_url or not model:
+        print(
+            "Error: PD_API_KEY / PD_BASE_URL / PD_MODEL must all be set "
+            "(via env or .env). See .env.example.",
+            file=sys.stderr,
+        )
+        return 2
+    llm = LLMClient(api_key=api_key, base_url=base_url, model=model)
+
+    console = Console()
+
+    def _announce(name: str, arguments: dict) -> None:
+        arg_preview = ", ".join(
+            f"{k}={_short(v)}" for k, v in list(arguments.items())[:4]
+        )
+        console.print(f"[dim]→ tool: [cyan]{name}[/cyan]({arg_preview})[/dim]")
+
+    loop = AgentLoop(
+        llm=llm,
+        vault_path=args.vault,
+        console=console,
+        on_tool_call=_announce,
+    )
+    return loop.run()
+
+
+def _short(v) -> str:
+    """One-line repr for tool-call argument preview."""
+    s = repr(v)
+    return s if len(s) <= 60 else s[:57] + "..."
+
+
+def _run_legacy_repl(args) -> int:
+    """Launch the pre-v1.4 slash-command REPL."""
+    repl = REPL(vault_path=args.vault)
+    return repl.run()
+
+
 def main(argv: list | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.subcommand == "distill":
@@ -552,12 +606,17 @@ def main(argv: list | None = None) -> int:
         return _run_resume(args)
     if args.subcommand == "research":
         return _run_research(args)
-    # No subcommand: launch REPL (requires --vault)
+    if args.subcommand == "legacy-repl":
+        return _run_legacy_repl(args)
+    # No subcommand: launch v1.4 conversational agent (requires --vault)
     if not getattr(args, "vault", None):
-        print("Error: --vault is required when launching REPL", file=sys.stderr)
+        print(
+            "Error: --vault is required when launching the conversational agent.\n"
+            "  paper-distiller-chat --vault /path/to/vault",
+            file=sys.stderr,
+        )
         return 2
-    repl = REPL(vault_path=args.vault)
-    return repl.run()
+    return _run_agent(args)
 
 
 if __name__ == "__main__":
