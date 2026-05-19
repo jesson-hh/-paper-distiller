@@ -20,6 +20,7 @@ dependencies = [
     "arxiv>=2.1",
     "pymupdf>=1.24",
     "python-dotenv>=1.0",
+    "rich>=13",
     "tomli>=2.0;python_version<'3.11'",
 ]
 
