@@ -2,6 +2,8 @@
 
 > Distill arxiv research papers into an Obsidian-compatible markdown wiki.
 
+[![CI](https://github.com/jesson-hh/math-research-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/jesson-hh/math-research-agent/actions/workflows/ci.yml)
+![Version](https://img.shields.io/badge/version-0.5.0-green.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Python: 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
 
@@ -18,9 +20,9 @@ Give `paper-distiller` a research topic or an author name, and it will:
 
 The output drops directly into a vault directory that opens in Obsidian — graph view, Dataview, tag pane, full-text search all work out of the box.
 
-## Install (v0.1.0 — from source)
+## Install (from source)
 
-    git clone https://github.com/jesson-hh/paper-distiller
+    git clone https://github.com/jesson-hh/math-research-agent paper-distiller
     cd paper-distiller
     python -m venv .venv
     .venv\Scripts\activate          # Windows
