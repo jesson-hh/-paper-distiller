@@ -2,6 +2,30 @@
 
 All notable changes documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] — 2026-05-19
+
+### Added
+- **`OpenCLIOpenAlexSearcher` agent** — wraps the [OpenCLI](https://github.com/jackwener/OpenCLI) Node CLI's `openalex` adapter via subprocess. Returns Paper-shaped results with abstracts, DOIs, PDF URLs, citation counts, and venue metadata. OpenAlex offers **100 req/s** rate limit (vs Semantic Scholar's much stricter limits), covering ~250M scholarly works. No API key needed. arxiv-DOI papers are auto-detected (DOI `10.48550/arxiv.X` → `arxiv_id` populated).
+- **`--source` flag accepts two new values**:
+  - `openalex` — OpenAlex only (rate-limit-safe)
+  - `all` — arxiv + ss + openalex parallel (NEW DEFAULT)
+- **`CandidateMerger` merges 3 sources** via two-pass merge (arxiv beats ss beats openalex on tie).
+- **REPL natural-language path** now defaults to `source="all"` for distill / ask / research.
+
+### Changed
+- **Default `--source` for new sessions is now `"all"`** (previously `"both"`). `"both"` is preserved as `arxiv + ss` for backward compatibility — old scripts and resumed v1.1.x sessions still work unchanged.
+- **`CandidateMerger.deps`** now includes `"openalex-searcher"` alongside the original two searchers. Bypass mode (`shared["candidates_direct"]`) unchanged — still requires `merger.deps = []` instance override.
+
+### Fixed
+- **Searcher graceful degradation on HTTP 429** — if `arxiv-searcher` or `ss-searcher` hits a transient HTTP failure (429, timeout, connection reset), the agent now catches the error, returns an empty list, and logs a stderr warning. The other source(s) continue; the pipeline downstream sees just whichever source succeeded. Previously, one source's 429 would `AgentFailed` the entire DAG.
+
+### External requirement (for `--source openalex` / `--source all`)
+- Install Node 21+ and OpenCLI: `npm install -g @jackwener/opencli`. Verified working at OpenCLI v1.7.22. No Chrome extension needed for the `openalex` / `arxiv` adapters (`Browser: no` in their metadata).
+
+### Internal
+- 8 new tests (7 for OpenCLI agent + 1 for 3-source merger + 3 for searcher graceful degradation). Total: **212** (was 201).
+- No new Python runtime deps. OpenCLI is an optional external tool — paper-distiller's PyPI install footprint unchanged.
+
 ## [1.1.0] — 2026-05-19
 
 ### Added
