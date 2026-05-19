@@ -2,6 +2,27 @@
 
 All notable changes documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0] — 2026-05-19
+
+### Added
+- **`paper-distiller-chat research`** — long-running (default 4h) autonomous "deep dive" loop on a single research question. Runs a 5-phase rolling cycle (seed → expand → structure → synthesize → gap-check) that produces distilled articles with structured frontmatter, theme-synthesis docs, and one top-level research report. State persisted per phase; resumable via `--resume <sid>`.
+- **4 new agents** in `agents/`:
+  - `CitationExplorer` — pulls references + cited-by from Semantic Scholar's `/paper/<id>/{references,citations}` endpoints, ranks candidates by Jaccard token-overlap on (question + seed title) vs (candidate title + abstract).
+  - `ThemeClusterer` — single LLM call grouping articles into 2-5 themes; falls back to one "Mixed" bucket on JSON failure.
+  - `TheoremExtractor` — extra LLM pass per article extracting `theorems` / `assumptions` / `convergence_rates` / `key_lemmas`. Parallel via `asyncio.gather`. Enables Dataview queries like "all papers assuming Lipschitz score".
+  - `GapDetector` — LLM judges whether the research loop has remaining gaps; replaces the original iteration-counter heuristic. Returns `{should_continue, missing_aspects, next_query, rationale}`.
+- **`ResearchState`** dataclass + disk persistence under `<vault>/.paper_distiller/research-sessions/<sid>/state.json`. Mirrors `SessionState` semantics.
+- **`load_config_research()`** in `config.py` with research-mode fields: `research_max_papers` (default 30), `research_max_cost_cny` (default ¥30), `research_max_duration_sec` (default 4h), `research_resume_session_id`.
+- **Interactive slot-filling in REPL** — natural-language input goes through `IntentRouter`, then for each missing param the REPL asks `name (default V): ` interactively, type-coerced (int/float/str/bool). Empty input uses default. Final preview + Y/n confirm before dispatch. Applies to all commands (distill / ask / resume / research).
+
+### Changed
+- **`CandidateMerger` bypass mode** — accepts `ctx.shared["candidates_direct"]` for direct candidate injection (used by research-mode Phase 2 to skip the searcher chain). Callers must override `merger.deps = []` on the instance to satisfy DAG validation.
+- **Research-mode Phase 2 design** — uses the new `CandidateMerger` bypass + instance dep override, NOT a stub-searcher hack. Cleaner DAG.
+
+### Internal
+- 28 new unit + integration tests (4 citation-explorer + 3 theme-clusterer + 3 theorem-extractor + 5 gap-detector + 3 research-state + 5 research-runner + 2 research-cli + 1 e2e + 2 slot-filling). Total: **201** (was 173).
+- No new runtime deps.
+
 ## [1.0.0] — 2026-05-19
 
 **BREAKING CHANGE.** Major rewrite around a chat-first interface backed by an async sub-agent framework. The old `paper-distiller` (single-pass) and `paper-distiller-qa` (multi-round) console scripts are **removed** and replaced by a single `paper-distiller-chat` entry point with three subcommands (`distill` / `ask` / `resume`) and an interactive REPL when invoked without a subcommand.
