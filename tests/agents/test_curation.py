@@ -51,6 +51,18 @@ async def test_merger_deps():
 
 
 @pytest.mark.asyncio
+async def test_merger_bypass_mode_uses_candidates_direct():
+    """When shared['candidates_direct'] is set, merger short-circuits."""
+    a = [_paper("X1"), _paper("X2")]
+    direct = [_paper("D1"), _paper("D2"), _paper("D3")]
+    # candidates_arxiv is set BUT candidates_direct should take precedence
+    ctx = _ctx(candidates_arxiv=a, candidates_ss=[], candidates_direct=direct)
+    out = await CandidateMerger().run(ctx)
+    ids = [p.arxiv_id for p in out["candidates"]]
+    assert ids == ["D1", "D2", "D3"]
+
+
+@pytest.mark.asyncio
 async def test_ranker_uses_top_n(mocker):
     candidates = [_paper(f"X{i}") for i in range(5)]
     fake_rank = mocker.patch(

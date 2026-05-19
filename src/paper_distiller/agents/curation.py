@@ -14,6 +14,11 @@ class CandidateMerger:
     deps = ["arxiv-searcher", "ss-searcher"]
 
     async def run(self, ctx: Context) -> dict:
+        # Bypass mode (research-mode Phase 2): candidates injected directly,
+        # no searcher chain needed. Caller must override deps=[] on the
+        # instance to satisfy DAG validation.
+        if "candidates_direct" in ctx.shared:
+            return {"candidates": list(ctx.shared["candidates_direct"])}
         a = ctx.shared.get("candidates_arxiv", [])
         b = ctx.shared.get("candidates_ss", [])
         merged = merge_candidates(a, b)
