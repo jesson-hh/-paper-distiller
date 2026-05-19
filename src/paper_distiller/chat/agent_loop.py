@@ -6,13 +6,12 @@ feeds results back, and continues until the LLM emits a plain-text reply for
 the user. The loop is the single source of conversational state — it owns the
 message history and the current vault_path.
 
-Tools (search, distill_by_id, show, ask, research) are documented in the
-system prompt and dispatched via execute_tool. Tool execution is synchronous
-because each wrapper internally calls asyncio.run() — see agent_tools.py.
+v1.4: 5 tools (search/distill_by_id/show/ask/research) + plain function-calling
+v1.5: + ask_user (6th tool) + streaming SSE + slash commands + plan mode +
+      Ctrl-C abort + session-wide cost display.
 
-This module is the user-facing surface in v1.4. The pre-v1.4 slash-command
-REPL is retained as the "legacy-repl" subcommand for users who prefer
-explicit control.
+Tool execution is synchronous because each wrapper internally calls
+asyncio.run() — see agent_tools.py.
 """
 
 from __future__ import annotations
@@ -22,11 +21,12 @@ import sys
 from typing import Callable
 
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.rule import Rule
 
 from ..llm.openai_compatible import LLMClient
 from .agent_tools import TOOL_SCHEMAS, execute_tool
+from .cost_estimator import estimate_tool_cost_cny
+from .plan_mode import should_show_plan, confirm_plan
 
 
 __all__ = ["AgentLoop", "DEFAULT_SYSTEM_PROMPT"]
@@ -36,7 +36,7 @@ DEFAULT_SYSTEM_PROMPT = """\
 你是 paper-distiller —— 一个研究论文的对话式智能体。用户通过自然语言跟你交流，\
 你负责理解意图、调用工具完成任务，并用简洁的中文回复结果。
 
-你拥有 5 个工具：
+你拥有 6 个工具：
 
 1. **search(topic, n=10, source="all")** — 在 arxiv + Semantic Scholar + OpenAlex \
 并行搜索，返回排序后的候选论文（含 id/title/authors/year/abstract/pdf_url）。\
@@ -83,8 +83,6 @@ def _stringify_tool_result(result: dict, max_chars: int = 8000) -> str:
     s = json.dumps(result, ensure_ascii=False, default=str)
     if len(s) <= max_chars:
         return s
-    # For oversize results (typically tool_show returning a long body),
-    # truncate the body field and re-encode.
     if isinstance(result, dict) and "body" in result and isinstance(result["body"], str):
         truncated = dict(result)
         keep = max_chars - 500
@@ -120,6 +118,9 @@ class AgentLoop:
         self.messages: list = [
             {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT}
         ]
+        # v1.5
+        self.auto_mode = False
+        self._abort = None  # set by run() when interactive
 
     def send(self, user_text: str) -> str:
         """Process one user turn. Returns the final assistant text reply.
@@ -130,10 +131,10 @@ class AgentLoop:
         self.messages.append({"role": "user", "content": user_text})
 
         for _ in range(self.max_tool_calls + 1):
-            resp = self.llm.complete_with_tools(self.messages, TOOL_SCHEMAS)
+            text_buf, tool_calls = self._stream_one_response()
 
-            assistant_msg: dict = {"role": "assistant", "content": resp.text or ""}
-            if resp.tool_calls:
+            assistant_msg: dict = {"role": "assistant", "content": text_buf}
+            if tool_calls:
                 assistant_msg["tool_calls"] = [
                     {
                         "id": tc.id,
@@ -143,67 +144,188 @@ class AgentLoop:
                             "arguments": json.dumps(tc.arguments, ensure_ascii=False),
                         },
                     }
-                    for tc in resp.tool_calls
+                    for tc in tool_calls
                 ]
             self.messages.append(assistant_msg)
 
-            if not resp.tool_calls:
-                return resp.text or ""
+            if not tool_calls:
+                return text_buf
 
-            for tc in resp.tool_calls:
-                if self.on_tool_call is not None:
-                    try:
-                        self.on_tool_call(tc.name, tc.arguments)
-                    except Exception:
-                        pass
-                result = execute_tool(
-                    tc.name, tc.arguments, vault_path=self.vault_path
-                )
-                self.messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": _stringify_tool_result(result),
-                    }
-                )
+            for tc in tool_calls:
+                self._execute_one_tool_call(tc)
 
         return "(达到单轮工具调用上限。如有需要请重新提问，或拆分成更小的步骤。)"
 
+    def _stream_one_response(self):
+        """Drive one LLM call. Returns (final_text, list_of_ToolCall)."""
+        from ..llm.openai_compatible import ToolCall
+
+        # Fallback path for LLMs that only implement complete_with_tools.
+        if not hasattr(self.llm, "complete_with_tools_stream"):
+            resp = self.llm.complete_with_tools(self.messages, TOOL_SCHEMAS)
+            if resp.text:
+                self._render_text_delta(resp.text)
+                self._end_text_render()
+            return resp.text or "", list(resp.tool_calls)
+
+        text_pieces: list[str] = []
+        partial: dict[str, dict] = {}
+        order: list[str] = []
+        current_call_id: str | None = None
+
+        for chunk in self.llm.complete_with_tools_stream(self.messages, TOOL_SCHEMAS):
+            if chunk.text_delta:
+                text_pieces.append(chunk.text_delta)
+                self._render_text_delta(chunk.text_delta)
+            if chunk.tool_call_id:
+                current_call_id = chunk.tool_call_id
+                if current_call_id not in partial:
+                    partial[current_call_id] = {"name": "", "arguments": ""}
+                    order.append(current_call_id)
+            if chunk.tool_name_delta:
+                if current_call_id is None:
+                    if not order:
+                        current_call_id = "__implicit__"
+                        order.append(current_call_id)
+                        partial[current_call_id] = {"name": "", "arguments": ""}
+                    else:
+                        current_call_id = order[-1]
+                partial[current_call_id]["name"] += chunk.tool_name_delta
+            if chunk.tool_arg_delta:
+                cid = current_call_id or (order[-1] if order else None)
+                if cid is None:
+                    continue
+                partial[cid]["arguments"] += chunk.tool_arg_delta
+            if chunk.finish_reason:
+                break
+
+        if text_pieces:
+            self._end_text_render()
+
+        tool_calls: list = []
+        for cid in order:
+            p = partial[cid]
+            try:
+                args = json.loads(p["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append(ToolCall(
+                id=cid if cid != "__implicit__" else "",
+                name=p["name"],
+                arguments=args,
+            ))
+
+        return "".join(text_pieces), tool_calls
+
+    def _render_text_delta(self, delta: str) -> None:
+        """Print one text chunk during streaming (no newline)."""
+        try:
+            self.console.print(delta, end="", soft_wrap=True, highlight=False)
+        except Exception:
+            sys.stdout.write(delta)
+            sys.stdout.flush()
+
+    def _end_text_render(self) -> None:
+        """Finish a streamed text block — print trailing newline."""
+        self.console.print()
+
+    def _execute_one_tool_call(self, tc) -> None:
+        """Run plan-mode check, execute tool, append result to history."""
+        if (
+            not getattr(self, "auto_mode", False)
+            and should_show_plan(tc.name, tc.arguments)
+        ):
+            est = estimate_tool_cost_cny(tc.name, tc.arguments)
+            if not confirm_plan(tc.name, tc.arguments, estimated_cost_cny=est):
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(
+                        {"cancelled": True, "by": "user", "phase": "plan"},
+                        ensure_ascii=False,
+                    ),
+                })
+                return
+
+        if self.on_tool_call is not None:
+            try:
+                self.on_tool_call(tc.name, tc.arguments)
+            except Exception:
+                pass
+        result = execute_tool(tc.name, tc.arguments, vault_path=self.vault_path)
+        self.messages.append({
+            "role": "tool",
+            "tool_call_id": tc.id,
+            "content": _stringify_tool_result(result),
+        })
+
     def run(self) -> int:
-        """Blocking interactive loop. Reads input(), prints response, EOF exits."""
+        """Blocking interactive loop. Streaming + slash + plan-mode aware."""
+        from .abort import AbortController, install_handler
+        from .slash_commands import parse_slash, dispatch_slash, EXIT_SIGNAL
+
         self.console.print(
-            Rule("[bold]paper-distiller[/bold] · 对话式研究助手 (Ctrl-D 退出)")
+            Rule(
+                "[bold]paper-distiller[/bold] · 对话式研究助手  ·  "
+                "/help for commands  ·  /exit to quit"
+            )
         )
         self.console.print(f"[dim]vault: {self.vault_path}[/dim]\n")
 
-        while True:
-            try:
-                line = input("you> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                self.console.print("\n[dim]再见。[/dim]")
-                return 0
-            if not line:
-                continue
-            if line.lower() in (":q", ":quit", ":exit", "/exit", "/quit"):
-                self.console.print("[dim]再见。[/dim]")
-                return 0
+        self._abort = AbortController()
+        uninstall = install_handler(self._abort)
 
-            try:
-                reply = self.send(line)
-            except Exception as e:
+        try:
+            while True:
+                if self._abort.exit_requested():
+                    self.console.print("\n[dim]再见。[/dim]")
+                    return 0
+                self._abort.reset()
+
+                try:
+                    line = input("you> ").strip()
+                except EOFError:
+                    self.console.print("\n[dim]再见。[/dim]")
+                    return 0
+                except KeyboardInterrupt:
+                    self.console.print()
+                    continue
+
+                if not line:
+                    continue
+
+                parsed = parse_slash(line)
+                if parsed is not None:
+                    name, args = parsed
+                    out = dispatch_slash(name, args, self)
+                    if out == EXIT_SIGNAL:
+                        self.console.print("[dim]再见。[/dim]")
+                        return 0
+                    self.console.print(out)
+                    continue
+
+                try:
+                    self.console.print()
+                    self.console.print(Rule("[cyan]paper-distiller[/cyan]"))
+                    reply = self.send(line)
+                    if not reply.strip():
+                        self.console.print("[dim](no reply)[/dim]")
+                except KeyboardInterrupt:
+                    self.console.print("\n[yellow](当前工具已中止)[/yellow]")
+                    self.messages.append({
+                        "role": "user",
+                        "content": "[system: 用户用 Ctrl-C 中止了上一步操作。请继续对话或建议下一步。]",
+                    })
+                except Exception as e:
+                    self.console.print(
+                        f"[red]agent error:[/red] {type(e).__name__}: {e}"
+                    )
+                    continue
+
                 self.console.print(
-                    f"[red]agent error:[/red] {type(e).__name__}: {e}",
-                    style="red",
+                    f"\n[dim]tokens in/out: {self.llm.total_tokens_in:,} / "
+                    f"{self.llm.total_tokens_out:,}  ·  "
+                    f"¥{self.llm.estimated_cost_cny:.4f}[/dim]\n"
                 )
-                continue
-
-            self.console.print()
-            self.console.print(Rule("[cyan]paper-distiller[/cyan]"))
-            if reply:
-                self.console.print(Markdown(reply))
-            else:
-                self.console.print("[dim](no reply)[/dim]")
-            self.console.print(
-                f"[dim]tokens in/out: {self.llm.total_tokens_in} / "
-                f"{self.llm.total_tokens_out}[/dim]\n"
-            )
+        finally:
+            uninstall()

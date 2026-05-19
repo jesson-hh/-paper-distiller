@@ -11,13 +11,20 @@ import json
 
 class _StubLLM:
     """Stateful LLM stub: emit a scripted sequence of ToolCallResponse objects
-    one per call to complete_with_tools."""
+    one per call to complete_with_tools.
+
+    Also exposes complete_with_tools_stream which adapts the scripted response
+    into a sequence of StreamChunks — the v1.5 AgentLoop prefers the streaming
+    path; we want existing scripts to still drive it cleanly.
+    """
 
     def __init__(self, responses):
         self._responses = list(responses)
         self.calls = 0
         self.total_tokens_in = 0
         self.total_tokens_out = 0
+        self.estimated_cost_cny = 0.0
+        self.model = "qwen-plus"
         self.last_messages = None
         self.last_tools = None
 
@@ -28,6 +35,21 @@ class _StubLLM:
         if not self._responses:
             raise AssertionError("StubLLM ran out of scripted responses")
         return self._responses.pop(0)
+
+    def complete_with_tools_stream(self, messages, tools, temperature=0.5):
+        """Adapt a scripted ToolCallResponse → sequence of StreamChunks."""
+        from paper_distiller.llm.openai_compatible import StreamChunk
+        import json as _json
+        resp = self.complete_with_tools(messages, tools, temperature)
+        if resp.text:
+            yield StreamChunk(text_delta=resp.text)
+        for tc in resp.tool_calls:
+            yield StreamChunk(
+                tool_call_id=tc.id,
+                tool_name_delta=tc.name,
+                tool_arg_delta=_json.dumps(tc.arguments),
+            )
+        yield StreamChunk(finish_reason=resp.finish_reason or "stop")
 
 
 def _make_response(text="", tool_calls=None, finish_reason=""):
@@ -394,6 +416,185 @@ def test_send_passes_tool_schemas_to_llm(tmp_path):
 
     # The stub captured the tools= argument.
     assert llm.last_tools is not None
-    assert len(llm.last_tools) == 5
+    assert len(llm.last_tools) == 6
     names = [t["function"]["name"] for t in llm.last_tools]
     assert set(names) == {s["function"]["name"] for s in TOOL_SCHEMAS}
+
+
+# ---------------------------------------------------------------------------
+# v1.5: streaming, plan-mode, auto-mode
+# ---------------------------------------------------------------------------
+
+def test_send_consumes_stream_chunks(tmp_path):
+    """The agent loop must accumulate StreamChunk objects into a final reply."""
+    from paper_distiller.chat.agent_loop import AgentLoop
+    from paper_distiller.llm.openai_compatible import StreamChunk
+
+    class _StreamingLLM:
+        model = "qwen-plus"
+        total_tokens_in = 0
+        total_tokens_out = 0
+        estimated_cost_cny = 0.0
+
+        def complete_with_tools_stream(self, messages, tools, temperature=0.5):
+            yield StreamChunk(text_delta="Hello ")
+            yield StreamChunk(text_delta="world.")
+            yield StreamChunk(finish_reason="stop")
+
+    loop = AgentLoop(llm=_StreamingLLM(), vault_path=str(tmp_path))
+    reply = loop.send("hi")
+    assert reply == "Hello world."
+
+
+def test_send_accumulates_tool_call_from_stream(mocker, tmp_path):
+    from paper_distiller.chat.agent_loop import AgentLoop
+    from paper_distiller.llm.openai_compatible import StreamChunk
+
+    yielded = [
+        [
+            StreamChunk(tool_call_id="c1", tool_name_delta="show"),
+            StreamChunk(tool_arg_delta='{"slug":'),
+            StreamChunk(tool_arg_delta='"x"}'),
+            StreamChunk(finish_reason="tool_calls"),
+        ],
+        [
+            StreamChunk(text_delta="done"),
+            StreamChunk(finish_reason="stop"),
+        ],
+    ]
+
+    class _LLM:
+        model = "qwen-plus"
+        total_tokens_in = 0
+        total_tokens_out = 0
+        estimated_cost_cny = 0.0
+        rounds = 0
+
+        def complete_with_tools_stream(self, messages, tools, temperature=0.5):
+            chunks = yielded[self.rounds]
+            self.rounds += 1
+            yield from chunks
+
+    mocker.patch(
+        "paper_distiller.chat.agent_loop.execute_tool",
+        return_value={"slug": "x"},
+    )
+    loop = AgentLoop(llm=_LLM(), vault_path=str(tmp_path))
+    reply = loop.send("show x")
+    assert reply == "done"
+
+
+def test_send_intercepts_with_plan_mode(mocker, tmp_path):
+    """Tool calls above plan threshold must hit confirm_plan first."""
+    from paper_distiller.chat.agent_loop import AgentLoop
+    from paper_distiller.llm.openai_compatible import StreamChunk
+
+    class _LLM:
+        model = "qwen-plus"
+        total_tokens_in = 0
+        total_tokens_out = 0
+        estimated_cost_cny = 0.0
+        rounds = 0
+
+        def complete_with_tools_stream(self, messages, tools, temperature=0.5):
+            if self.rounds == 0:
+                self.rounds += 1
+                yield StreamChunk(
+                    tool_call_id="c1",
+                    tool_name_delta="research",
+                )
+                yield StreamChunk(tool_arg_delta='{"question":"X?","max_cost_cny":15.0}')
+                yield StreamChunk(finish_reason="tool_calls")
+            else:
+                yield StreamChunk(text_delta="ok, did it")
+                yield StreamChunk(finish_reason="stop")
+
+    confirm = mocker.patch(
+        "paper_distiller.chat.agent_loop.confirm_plan",
+        return_value=True,
+    )
+    exec_mock = mocker.patch(
+        "paper_distiller.chat.agent_loop.execute_tool",
+        return_value={"session_id": "rs1"},
+    )
+
+    loop = AgentLoop(llm=_LLM(), vault_path=str(tmp_path))
+    reply = loop.send("研究下扩散")
+    assert reply == "ok, did it"
+    confirm.assert_called_once()
+    exec_mock.assert_called_once()
+
+
+def test_send_skips_plan_mode_in_auto_mode(mocker, tmp_path):
+    """When loop.auto_mode is True, confirm_plan must NOT be invoked."""
+    from paper_distiller.chat.agent_loop import AgentLoop
+    from paper_distiller.llm.openai_compatible import StreamChunk
+
+    class _LLM:
+        model = "qwen-plus"
+        total_tokens_in = 0
+        total_tokens_out = 0
+        estimated_cost_cny = 0.0
+        rounds = 0
+
+        def complete_with_tools_stream(self, messages, tools, temperature=0.5):
+            if self.rounds == 0:
+                self.rounds += 1
+                yield StreamChunk(tool_call_id="c1", tool_name_delta="research")
+                yield StreamChunk(tool_arg_delta='{"max_cost_cny":15.0,"question":"x"}')
+                yield StreamChunk(finish_reason="tool_calls")
+            else:
+                yield StreamChunk(text_delta="done")
+                yield StreamChunk(finish_reason="stop")
+
+    confirm = mocker.patch(
+        "paper_distiller.chat.agent_loop.confirm_plan", return_value=True
+    )
+    mocker.patch(
+        "paper_distiller.chat.agent_loop.execute_tool",
+        return_value={"session_id": "x"},
+    )
+
+    loop = AgentLoop(llm=_LLM(), vault_path=str(tmp_path))
+    loop.auto_mode = True
+    loop.send("研究")
+    confirm.assert_not_called()
+
+
+def test_send_cancels_plan_returns_cancelled_to_llm(mocker, tmp_path):
+    """When confirm_plan returns False, the tool MUST NOT run."""
+    from paper_distiller.chat.agent_loop import AgentLoop
+    from paper_distiller.llm.openai_compatible import StreamChunk
+
+    class _LLM:
+        model = "qwen-plus"
+        total_tokens_in = 0
+        total_tokens_out = 0
+        estimated_cost_cny = 0.0
+        rounds = 0
+
+        def complete_with_tools_stream(self, messages, tools, temperature=0.5):
+            if self.rounds == 0:
+                self.rounds += 1
+                yield StreamChunk(tool_call_id="c1", tool_name_delta="research")
+                yield StreamChunk(tool_arg_delta='{"max_cost_cny":15.0,"question":"x"}')
+                yield StreamChunk(finish_reason="tool_calls")
+            else:
+                yield StreamChunk(text_delta="cancelled, will not run")
+                yield StreamChunk(finish_reason="stop")
+
+    mocker.patch("paper_distiller.chat.agent_loop.confirm_plan", return_value=False)
+    exec_mock = mocker.patch(
+        "paper_distiller.chat.agent_loop.execute_tool",
+        return_value={"session_id": "x"},
+    )
+
+    loop = AgentLoop(llm=_LLM(), vault_path=str(tmp_path))
+    loop.send("研究")
+    exec_mock.assert_not_called()
+
+    import json as _json
+    tool_msgs = [m for m in loop.messages if m.get("role") == "tool"]
+    assert tool_msgs
+    payload = _json.loads(tool_msgs[-1]["content"])
+    assert payload.get("cancelled") is True
