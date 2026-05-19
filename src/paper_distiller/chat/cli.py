@@ -60,6 +60,13 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--verbose", "-v", action="store_true")
     ask.add_argument("--model")
     ask.add_argument("--provider")
+
+    resume = sub.add_parser("resume", help="Resume a paused/errored QA session")
+    resume.add_argument("--vault", required=True)
+    resume.add_argument("--session-id", required=True)
+    resume.add_argument("--verbose", "-v", action="store_true")
+    resume.add_argument("--model")
+    resume.add_argument("--provider")
     return p
 
 
@@ -176,12 +183,55 @@ def _run_ask(args) -> int:
     return 0
 
 
+def _run_resume(args) -> int:
+    from ..qa.state import read_state
+    from pathlib import Path
+    existing = read_state(Path(args.vault), args.session_id)
+    if existing is None:
+        print(f"Error: session {args.session_id!r} not found in {args.vault}", file=sys.stderr)
+        return 2
+    try:
+        cfg = load_config_qa(
+            vault_path=args.vault,
+            question=existing.question,
+            max_rounds=existing.config_snapshot.get("max_rounds", 5),
+            max_articles=existing.config_snapshot.get("max_articles", 15),
+            max_cost_cny=existing.config_snapshot.get("max_cost_cny", 20.0),
+            confidence_threshold=existing.config_snapshot.get("confidence_threshold", 8),
+            per_round=existing.config_snapshot.get("per_round", 2),
+            source=existing.config_snapshot.get("source", "both"),
+            interactive=False,
+            resume_session_id=args.session_id,
+            verbose=args.verbose,
+            dry_run=False,
+            model_override=args.model,
+            provider_override=args.provider,
+        )
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    try:
+        summary = run_qa_loop(cfg)
+    except Exception as e:
+        print(f"\nError during resume: {type(e).__name__}: {e}", file=sys.stderr)
+        return 3
+    print()
+    print(f"  Session:      {summary['session_id']} (resumed)")
+    print(f"  Stop reason:  {summary['stop_reason']}")
+    print(f"  Rounds:       {summary['rounds_completed']}")
+    print(f"  Articles:     {summary['articles_distilled_count']}")
+    print(f"  Cost:         CNY {summary['cost_cny']:.2f}")
+    return 0
+
+
 def main(argv: list | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.subcommand == "distill":
         return asyncio.run(_run_distill(args))
     if args.subcommand == "ask":
         return _run_ask(args)  # run_qa_loop wraps asyncio.run internally
+    if args.subcommand == "resume":
+        return _run_resume(args)
     return 2
 
 
