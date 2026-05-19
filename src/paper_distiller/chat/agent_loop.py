@@ -21,12 +21,19 @@ import sys
 from typing import Callable
 
 from rich.console import Console
-from rich.rule import Rule
 
 from ..llm.openai_compatible import LLMClient
 from .agent_tools import TOOL_SCHEMAS, execute_tool
 from .cost_estimator import estimate_tool_cost_cny
 from .plan_mode import should_show_plan, confirm_plan
+from .ui import (
+    print_assistant_bullet,
+    print_slash_output,
+    print_status_line,
+    print_tool_call_done,
+    print_tool_call_running,
+    print_welcome_banner,
+)
 
 
 __all__ = ["AgentLoop", "DEFAULT_SYSTEM_PROMPT"]
@@ -164,6 +171,7 @@ class AgentLoop:
         if not hasattr(self.llm, "complete_with_tools_stream"):
             resp = self.llm.complete_with_tools(self.messages, TOOL_SCHEMAS)
             if resp.text:
+                print_assistant_bullet(self.console)
                 self._render_text_delta(resp.text)
                 self._end_text_render()
             return resp.text or "", list(resp.tool_calls)
@@ -172,9 +180,13 @@ class AgentLoop:
         partial: dict[str, dict] = {}
         order: list[str] = []
         current_call_id: str | None = None
+        bullet_printed = False
 
         for chunk in self.llm.complete_with_tools_stream(self.messages, TOOL_SCHEMAS):
             if chunk.text_delta:
+                if not bullet_printed:
+                    print_assistant_bullet(self.console)
+                    bullet_printed = True
                 text_pieces.append(chunk.text_delta)
                 self._render_text_delta(chunk.text_delta)
             if chunk.tool_call_id:
@@ -230,7 +242,14 @@ class AgentLoop:
         self.console.print()
 
     def _execute_one_tool_call(self, tc) -> None:
-        """Run plan-mode check, execute tool, append result to history."""
+        """Run plan-mode check, execute tool, append result to history.
+
+        Visual flow (Claude Code-style):
+            ⏺ tool_name(args)           ← running indicator
+            ● tool_name(args)  →  N res ← done indicator with summary
+        """
+        import time
+
         if (
             not getattr(self, "auto_mode", False)
             and should_show_plan(tc.name, tc.arguments)
@@ -247,12 +266,23 @@ class AgentLoop:
                 })
                 return
 
+        # Running indicator before invoking tool
+        print_tool_call_running(self.console, tc.name, tc.arguments)
+
         if self.on_tool_call is not None:
             try:
                 self.on_tool_call(tc.name, tc.arguments)
             except Exception:
                 pass
+
+        t0 = time.monotonic()
         result = execute_tool(tc.name, tc.arguments, vault_path=self.vault_path)
+        dt = time.monotonic() - t0
+
+        # Done indicator with summary
+        if isinstance(result, dict):
+            print_tool_call_done(self.console, tc.name, tc.arguments, result, dt)
+
         self.messages.append({
             "role": "tool",
             "tool_call_id": tc.id,
@@ -261,16 +291,18 @@ class AgentLoop:
 
     def run(self) -> int:
         """Blocking interactive loop. Streaming + slash + plan-mode aware."""
+        from .. import __version__
         from .abort import AbortController, install_handler
         from .slash_commands import parse_slash, dispatch_slash, EXIT_SIGNAL
+        from .ui import PROMPT
 
-        self.console.print(
-            Rule(
-                "[bold]paper-distiller[/bold] · 对话式研究助手  ·  "
-                "/help for commands  ·  /exit to quit"
-            )
+        print_welcome_banner(
+            self.console,
+            version=__version__,
+            vault_path=self.vault_path,
+            model=self.llm.model,
+            auto_mode=self.auto_mode,
         )
-        self.console.print(f"[dim]vault: {self.vault_path}[/dim]\n")
 
         self._abort = AbortController()
         uninstall = install_handler(self._abort)
@@ -283,7 +315,11 @@ class AgentLoop:
                 self._abort.reset()
 
                 try:
-                    line = input("you> ").strip()
+                    # Bright cyan prompt chip — Claude Code-style
+                    self.console.print(
+                        f"[bold cyan]{PROMPT}[/bold cyan] ", end=""
+                    )
+                    line = input().strip()
                 except EOFError:
                     self.console.print("\n[dim]再见。[/dim]")
                     return 0
@@ -301,31 +337,39 @@ class AgentLoop:
                     if out == EXIT_SIGNAL:
                         self.console.print("[dim]再见。[/dim]")
                         return 0
-                    self.console.print(out)
+                    print_slash_output(self.console, out)
                     continue
 
                 try:
                     self.console.print()
-                    self.console.print(Rule("[cyan]paper-distiller[/cyan]"))
                     reply = self.send(line)
                     if not reply.strip():
-                        self.console.print("[dim](no reply)[/dim]")
+                        # Edge case: assistant emitted only tool calls then exit
+                        # without a wrap-up text — keep quiet, the cards spoke
+                        pass
                 except KeyboardInterrupt:
-                    self.console.print("\n[yellow](当前工具已中止)[/yellow]")
+                    self.console.print(
+                        "\n[yellow]⊘ 当前工具已中止[/yellow]"
+                    )
                     self.messages.append({
                         "role": "user",
                         "content": "[system: 用户用 Ctrl-C 中止了上一步操作。请继续对话或建议下一步。]",
                     })
                 except Exception as e:
                     self.console.print(
-                        f"[red]agent error:[/red] {type(e).__name__}: {e}"
+                        f"[red]✗ agent error:[/red] {type(e).__name__}: {e}"
                     )
                     continue
 
-                self.console.print(
-                    f"\n[dim]tokens in/out: {self.llm.total_tokens_in:,} / "
-                    f"{self.llm.total_tokens_out:,}  ·  "
-                    f"¥{self.llm.estimated_cost_cny:.4f}[/dim]\n"
+                self.console.print()
+                print_status_line(
+                    self.console,
+                    model=self.llm.model,
+                    tokens_in=self.llm.total_tokens_in,
+                    tokens_out=self.llm.total_tokens_out,
+                    cost_cny=self.llm.estimated_cost_cny,
+                    auto_mode=self.auto_mode,
                 )
+                self.console.print()
         finally:
             uninstall()
