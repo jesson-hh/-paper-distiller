@@ -56,6 +56,14 @@ class LLMClient:
         self.total_tokens_out = 0
         self._client = httpx.Client(timeout=timeout)
 
+    @property
+    def estimated_cost_cny(self) -> float:
+        """Total session cost in CNY based on accumulated in/out tokens."""
+        from .pricing import estimate_cost_cny
+        return estimate_cost_cny(
+            self.model, self.total_tokens_in, self.total_tokens_out
+        )
+
     def complete(
         self,
         messages: list,
