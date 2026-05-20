@@ -6,7 +6,11 @@ from unittest.mock import MagicMock
 
 
 class _FakeRecord:
-    """Minimal sickle.Record stand-in."""
+    """Minimal sickle.Record stand-in matching pyoai's parsed structure.
+
+    pyoai flattens nested <author> elements into sibling lists at the same
+    level: metadata["keyname"] = [...], metadata["forenames"] = [...].
+    """
     def __init__(self, arxiv_id, title="T", abstract="A", deleted=False,
                  categories=("cs.LG",), authors_keyname="Smith",
                  authors_forenames="Alice"):
@@ -14,15 +18,21 @@ class _FakeRecord:
         if deleted:
             self.metadata = {}
             return
+        # Support either single-author (str) or multi-author (list/tuple).
+        if isinstance(authors_keyname, (list, tuple)):
+            keynames = list(authors_keyname)
+            forenames = list(authors_forenames)
+        else:
+            keynames = [authors_keyname]
+            forenames = [authors_forenames]
         self.metadata = {
             "id": [arxiv_id],
             "title": [title],
             "abstract": [abstract],
             "categories": [" ".join(categories)],
-            "authors": [{"author": [{
-                "keyname": [authors_keyname],
-                "forenames": [authors_forenames],
-            }]}],
+            "author": [None] * len(keynames),
+            "keyname": keynames,
+            "forenames": forenames,
             "created": ["2024-01-01"],
         }
 
@@ -42,6 +52,42 @@ def test_record_to_paper_flattens_authors():
     assert p.title == "Diffusion"
     assert p.authors == ["Alice Smith"]
     assert p.source == "oai-pmh"
+
+
+def test_record_to_paper_multiple_authors():
+    """The real Sickle parsed structure for arxiv has sibling lists keyname
+    and forenames, not nested author dicts. Verify we zip them correctly."""
+    from paper_distiller.arxiv_local.oai_record import record_to_paper
+    r = _FakeRecord(
+        "2401.0",
+        authors_keyname=["Mészáros", "Micek", "Jiao"],
+        authors_forenames=["Tamás", "Piotr", "Yuling"],
+    )
+    p = record_to_paper(r)
+    assert p.authors == ["Tamás Mészáros", "Piotr Micek", "Yuling Jiao"]
+
+
+def test_flatten_authors_handles_missing_forenames():
+    """Some records have only keyname (single-name authors / institutional)."""
+    from paper_distiller.arxiv_local.oai_record import _flatten_authors
+
+    md = {
+        "keyname": ["OnlySurname"],
+        "forenames": [""],
+    }
+    assert _flatten_authors(md) == ["OnlySurname"]
+
+
+def test_flatten_authors_zip_handles_uneven_lists():
+    """If one list is longer than the other (shouldn't happen but defend)."""
+    from paper_distiller.arxiv_local.oai_record import _flatten_authors
+
+    md = {
+        "keyname": ["A", "B", "C"],
+        "forenames": ["X", "Y"],
+    }
+    # zip stops at shorter list — 2 authors, last one dropped silently
+    assert _flatten_authors(md) == ["X A", "Y B"]
 
 
 def test_record_to_paper_skips_no_id_no_title():

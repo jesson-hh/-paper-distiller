@@ -21,19 +21,24 @@ def _first(d: dict, key: str) -> str | None:
 
 
 def _flatten_authors(metadata: dict) -> list:
-    """Flatten Sickle's nested author structure to ['First Last', ...]."""
+    """Flatten Sickle's parsed author structure to ['First Last', ...].
+
+    Sickle's pyoai parser flattens the nested arxiv <author><keyname/>
+    <forenames/></author> XML into sibling lists at the metadata level:
+
+        metadata["author"]    = [None, None, None]   # placeholder per author
+        metadata["keyname"]   = ["Smith", "Doe", "Lee"]
+        metadata["forenames"] = ["Alice", "Bob", "Chris"]
+
+    We zip(forenames, keyname) to produce "First Last" strings.
+    """
+    surnames = metadata.get("keyname") or []
+    given_names = metadata.get("forenames") or []
     out = []
-    raw = metadata.get("authors") or []
-    if not raw:
-        return out
-    container = raw[0] if isinstance(raw, list) else raw
-    name_records = container.get("author", []) if isinstance(container, dict) else []
-    for nr in name_records:
-        if not isinstance(nr, dict):
-            continue
-        last = " ".join(nr.get("keyname", []) or []).strip()
-        first = " ".join(nr.get("forenames", []) or []).strip()
-        full = f"{first} {last}".strip()
+    for sur, given in zip(surnames, given_names):
+        sur = (sur or "").strip()
+        given = (given or "").strip()
+        full = f"{given} {sur}".strip()
         if full:
             out.append(full)
     return out
