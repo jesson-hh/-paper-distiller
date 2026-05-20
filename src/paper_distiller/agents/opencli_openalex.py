@@ -48,9 +48,24 @@ async def _opencli_call(args: list, timeout: float = 60.0) -> list:
         print(f"  opencli timeout: {' '.join(cmd)}", file=sys.stderr)
         return []
     if proc.returncode != 0:
+        # Compress OpenCLI's structured error dump into a single readable line.
+        err_text = err.decode("utf-8", "replace")
+        out_text = out.decode("utf-8", "replace")
+        blob = err_text + " " + out_text
+        msg = "openalex unreachable"  # default summary
+        for needle, summary in (
+            ("fetch failed", "openalex unreachable (network)"),
+            ("ENOTFOUND", "openalex DNS lookup failed"),
+            ("ETIMEDOUT", "openalex request timed out"),
+            ("rate limit", "openalex rate-limited"),
+            ("429", "openalex rate-limited (429)"),
+            ("getaddrinfo", "openalex DNS lookup failed"),
+        ):
+            if needle in blob:
+                msg = summary
+                break
         print(
-            f"  opencli failed ({proc.returncode}): "
-            f"{err.decode('utf-8', 'replace')[:200]}",
+            f"  [openalex degraded] {msg}; continuing with arxiv + SS.",
             file=sys.stderr,
         )
         return []
