@@ -47,6 +47,8 @@ DEFAULT_SYSTEM_PROMPT = """\
 
 1. **search(topic, n=10, source="arxiv", sort="relevance")** — 默认在 **arxiv** 单源搜索（稳、\
 无限速、ML/CS 论文覆盖 95%+）。返回排序后的候选（含 id/title/authors/year/abstract/pdf_url）。
+   - 用户若 bootstrap 过本地镜像（运行 `paper-distiller-arxiv bootstrap`），search 直接走本地 \
+   SQLite + FTS5，**完全不调 arxiv API**，可放心连续调用。否则透明 fallback 到 live API（受节流保护）。
    - `source="all"` 时才加上 SS + OpenAlex（更广但慢且常被限速），**只有用户明确说"广一点"/"扫全网"时才用**。
    - `sort="date"` 用于"**最近/最新**"类查询（"最近的扩散模型论文" → `sort="date"`），按提交日期倒序，\
    把最新预印本放前面。普通主题查询用默认 `sort="relevance"`。
