@@ -201,6 +201,10 @@ class LLMClient:
             "temperature": temperature,
             "tools": tools,
             "stream": True,
+            # OpenAI-compatible providers omit `usage` from streamed responses
+            # by default. Explicit opt-in lets us track tokens (and hence cost)
+            # accurately. Aliyun Bailian and DeepSeek both honor this flag.
+            "stream_options": {"include_usage": True},
         }
         seen_call_ids: dict[int, str] = {}
         try:

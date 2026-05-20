@@ -15,6 +15,12 @@ PRICING_PER_M_TOKENS_CNY: dict[str, dict[str, float]] = {
     "qwen-plus": {"in": 0.8, "out": 2.0},
     "qwen-turbo": {"in": 0.3, "out": 0.6},
     "qwen-max": {"in": 20.0, "out": 60.0},
+    "qwen3-plus": {"in": 0.8, "out": 2.0},
+    "qwen3-turbo": {"in": 0.3, "out": 0.6},
+    "qwen3-max": {"in": 20.0, "out": 60.0},
+    "qwen3.5-plus": {"in": 0.8, "out": 2.0},
+    "qwen3.5-turbo": {"in": 0.3, "out": 0.6},
+    "qwen3.5-max": {"in": 20.0, "out": 60.0},
     "deepseek-chat": {"in": 0.5, "out": 1.5},
     "deepseek-reasoner": {"in": 1.0, "out": 4.0},
 }

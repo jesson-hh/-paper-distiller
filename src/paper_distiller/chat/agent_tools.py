@@ -368,6 +368,66 @@ def _error(exc: Exception) -> dict:
 # Tool wrappers
 # ---------------------------------------------------------------------------
 
+def _run_one_search(topic, n, source, sort, vault_path):
+    """Single search pass. Returns the same shape tool_search returns
+    (so tool_search can compose two passes for auto-fallback)."""
+    cfg = load_config(
+        vault_path=vault_path,
+        topic=topic,
+        n=n,
+        pool=max(n * 3, 30),
+        source=source,
+    )
+    vault = VaultStore(cfg.vault_path)
+    llm = LLMClient(cfg.api_key, cfg.base_url, cfg.model)
+    renderer = ConsoleRenderer(title=f"search · {topic}")
+    ctx = Context(
+        cfg=cfg, llm=llm, vault=vault,
+        shared={"arxiv_sort": sort},
+        on_status=renderer.on_status,
+    )
+    dag = DAG([
+        ArxivSearcher(),
+        SemanticScholarSearcher(),
+        OpenCLIOpenAlexSearcher(),
+        CandidateMerger(),
+        CandidateRanker(),
+    ])
+    try:
+        asyncio.run(Orchestrator(dag, ctx).run())
+    except Exception as e:
+        cause = getattr(e, "__cause__", None) or e
+        return {
+            "error": f"{type(cause).__name__}: {cause}",
+            "degraded_sources": ctx.shared.get("degraded_sources", []),
+        }
+    ranked = ctx.shared.get("ranked", []) or []
+    degraded = ctx.shared.get("degraded_sources", [])
+    candidates = []
+    for p in ranked[:n]:
+        pid = getattr(p, "arxiv_id", None) or getattr(p, "doi", None) \
+            or getattr(p, "paper_id", None) or ""
+        candidates.append({
+            "id": pid,
+            "title": getattr(p, "title", "") or "",
+            "authors": (getattr(p, "authors", None) or [])[:5],
+            "year": (getattr(p, "published", "") or "")[:4],
+            "abstract": (getattr(p, "abstract", "") or "")[:500],
+            "pdf_url": getattr(p, "pdf_url", "") or "",
+        })
+    out: dict = {"candidates": candidates}
+    if degraded:
+        out["degraded_sources"] = degraded
+    return out
+
+
+_FALLBACK_CHAIN = {
+    "arxiv": ["ss", "openalex"],
+    "ss": ["arxiv", "openalex"],
+    "openalex": ["arxiv", "ss"],
+}
+
+
 def tool_search(
     topic: str,
     n: int = 10,
@@ -376,87 +436,64 @@ def tool_search(
     *,
     vault_path: str,
 ) -> dict:
-    """Search arxiv (default) or multi-source; return ranked candidates."""
+    """Search arxiv (default) or multi-source; return ranked candidates.
+
+    Auto-fallback: if a single-source search returns zero candidates because
+    that source is degraded (IP throttled, network unreachable, 429), the
+    wrapper transparently retries with the next source in _FALLBACK_CHAIN
+    before reporting failure. The result dict gains a "tried_sources" list
+    and "fallback_from" field so the LLM knows what happened.
+
+    source="all" disables fallback (already querying everything).
+    """
     try:
-        # Clamp n — values above 30 explode the LLM rank prompt and rarely
-        # produce meaningfully more useful candidates.
         original_n = n
         if n > 30:
             n = 30
         if n < 1:
             n = 10
-        cfg = load_config(
-            vault_path=vault_path,
-            topic=topic,
-            n=n,
-            pool=max(n * 3, 30),
-            source=source,
-        )
-        vault = VaultStore(cfg.vault_path)
-        llm = LLMClient(cfg.api_key, cfg.base_url, cfg.model)
-        renderer = ConsoleRenderer(title=f"search · {topic}")
-        ctx = Context(
-            cfg=cfg, llm=llm, vault=vault,
-            shared={"arxiv_sort": sort},
-            on_status=renderer.on_status,
-        )
-        dag = DAG([
-            ArxivSearcher(),
-            SemanticScholarSearcher(),
-            OpenCLIOpenAlexSearcher(),
-            CandidateMerger(),
-            CandidateRanker(),
-        ])
-        try:
-            asyncio.run(Orchestrator(dag, ctx).run())
-        except Exception as e:
-            # Surface root cause to the LLM instead of bare "AgentFailed".
-            cause = getattr(e, "__cause__", None) or e
-            return {
-                "error": f"{type(cause).__name__}: {cause}",
-                "degraded_sources": ctx.shared.get("degraded_sources", []),
-                "hint": (
-                    "If degraded_sources is non-empty, the upstream APIs are "
-                    "rate-limited or unreachable. Do NOT retry immediately — "
-                    "wait 60+ seconds, call ask_user to consult the user, "
-                    "or switch to source=\"arxiv\" only."
-                ),
-            }
 
-        ranked = ctx.shared.get("ranked", []) or []
-        degraded = ctx.shared.get("degraded_sources", [])
+        # Build the chain of sources to try. For single-source we tack on
+        # fallbacks; for "all" we just do the one pass.
+        if source == "all":
+            chain = ["all"]
+        else:
+            chain = [source, *_FALLBACK_CHAIN.get(source, [])]
 
-        # All sources empty + at least one degraded → rate-limited, not "no results"
-        if not ranked and degraded:
-            return {
-                "candidates": [],
-                "degraded_sources": degraded,
-                "hint": (
-                    f"All requested sources degraded: {degraded}. This is a "
-                    "rate-limit / network issue, NOT a query problem. Do NOT "
-                    "retry with new keywords — wait 60s, ask_user, or try "
-                    "source=\"arxiv\" only."
-                ),
-            }
+        tried: list[str] = []
+        last_result: dict = {}
+        for try_source in chain:
+            tried.append(try_source)
+            result = _run_one_search(topic, n, try_source, sort, vault_path)
+            last_result = result
+            # Hard error → don't try fallbacks (would just compound noise)
+            if "error" in result:
+                break
+            # Got candidates → we're done
+            if result.get("candidates"):
+                if len(tried) > 1:
+                    result["fallback_from"] = chain[0]
+                    result["fallback_to"] = try_source
+                result["tried_sources"] = tried
+                if original_n != n:
+                    result["clamped_n"] = {"requested": original_n, "used": n}
+                return result
+            # Empty result. If degraded, try next source. Otherwise it's a
+            # legit "no results for this query" — don't keep trying.
+            if not result.get("degraded_sources"):
+                break
 
-        candidates = []
-        for p in ranked[:n]:
-            pid = getattr(p, "arxiv_id", None) or getattr(p, "doi", None) \
-                or getattr(p, "paper_id", None) or ""
-            candidates.append({
-                "id": pid,
-                "title": getattr(p, "title", "") or "",
-                "authors": (getattr(p, "authors", None) or [])[:5],
-                "year": (getattr(p, "published", "") or "")[:4],
-                "abstract": (getattr(p, "abstract", "") or "")[:500],
-                "pdf_url": getattr(p, "pdf_url", "") or "",
-            })
-        out: dict = {"candidates": candidates}
-        if degraded:
-            out["degraded_sources"] = degraded
+        # All sources in chain came back empty + degraded → real outage.
+        last_result["tried_sources"] = tried
         if original_n != n:
-            out["clamped_n"] = {"requested": original_n, "used": n}
-        return out
+            last_result["clamped_n"] = {"requested": original_n, "used": n}
+        last_result.setdefault("candidates", [])
+        last_result["hint"] = (
+            f"Tried sources {tried} — all degraded or empty. This is a "
+            "network / rate-limit issue, not a query issue. Wait 60s, "
+            "call ask_user, or tell the user to check connectivity."
+        )
+        return last_result
     except Exception as e:
         return _error(e)
 
