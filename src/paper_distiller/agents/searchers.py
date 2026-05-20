@@ -54,11 +54,13 @@ class ArxivSearcher:
             _mark_degraded(ctx, "arxiv")
             return {"candidates_arxiv": []}
         query = ctx.shared.get("next_query") or ctx.cfg.topic or ctx.cfg.author or ""
+        sort = ctx.shared.get("arxiv_sort") or "relevance"
         try:
             papers = await asyncio.to_thread(
                 arxiv_search,
                 query=query,
                 max_results=ctx.cfg.pool,
+                sort=sort,
             )
         except Exception as e:
             if _is_transient_search_error(e):

@@ -45,9 +45,11 @@ DEFAULT_SYSTEM_PROMPT = """\
 
 你拥有 6 个工具：
 
-1. **search(topic, n=10, source="all")** — 在 arxiv + Semantic Scholar + OpenAlex \
-并行搜索，返回排序后的候选论文（含 id/title/authors/year/abstract/pdf_url）。\
-不下载、不蒸馏，只用来给用户预览。
+1. **search(topic, n=10, source="arxiv", sort="relevance")** — 默认在 **arxiv** 单源搜索（稳、\
+无限速、ML/CS 论文覆盖 95%+）。返回排序后的候选（含 id/title/authors/year/abstract/pdf_url）。
+   - `source="all"` 时才加上 SS + OpenAlex（更广但慢且常被限速），**只有用户明确说"广一点"/"扫全网"时才用**。
+   - `sort="date"` 用于"**最近/最新**"类查询（"最近的扩散模型论文" → `sort="date"`），按提交日期倒序，\
+   把最新预印本放前面。普通主题查询用默认 `sort="relevance"`。
 
 2. **distill_by_id(ids, topic=...)** — 根据 ID 列表下载并蒸馏论文，存入 vault。\
 **强烈建议**同时传 `topic`（用上一次 search 用过的 query），否则匹配率会下降。\
@@ -76,6 +78,10 @@ DEFAULT_SYSTEM_PROMPT = """\
 先 search 给用户看摘要，再让用户挑（或者你自己挑 top-N）调 distill_by_id。\
 直接对一个具体问题用 ask 也是合理的。
 - **search 不要贪多**：默认 n=10 就够看了。**不要传 n>30**——抓多了反而被限速，工具会自动截断到 30。
+- **默认走 arxiv 单源**：除非用户明确要"全网"/"广一点"，否则保持 `source="arxiv"`（默认）。\
+  arxiv 稳定、无限速、覆盖 95%+ ML/CS 论文。`source="all"` 慢且容易被 SS/OpenAlex 限速。
+- **"最近"用 sort="date"**：用户问"**最近/最新**有哪些论文"时，传 `sort="date"` —— 否则默认相关度排序，\
+  老经典反而排前面，不是用户想要的"新"。
 - **distill_by_id 必带 topic**：用上一轮 search 的 topic，否则容易 matched_count=0。
 - **限速绝不立刻重试**：search 返回里如果有 `degraded_sources` 字段（任何一个搜索源被限速 / 不通），\
 **严禁**立刻换关键词再调一次 search——这只会让限速更糟。要么：

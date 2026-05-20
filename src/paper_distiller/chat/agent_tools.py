@@ -64,9 +64,12 @@ _SEARCH_SCHEMA = {
     "function": {
         "name": "search",
         "description": (
-            "Search arxiv + Semantic Scholar + OpenAlex in parallel for a "
-            "research topic or author. Returns ranked candidates with titles, "
-            "authors, and short abstracts — no PDF download, no distillation."
+            "Search papers by topic or author. Default source is 'arxiv' "
+            "(most stable, no rate-limit issues, covers ~95% of ML/CS "
+            "papers). Use source='all' to widen to Semantic Scholar + "
+            "OpenAlex, but those are rate-limited and slower. Returns "
+            "ranked candidates with titles, authors, abstracts — no PDF "
+            "download, no distillation."
         ),
         "parameters": {
             "type": "object",
@@ -77,14 +80,28 @@ _SEARCH_SCHEMA = {
                 },
                 "n": {
                     "type": "integer",
-                    "description": "How many candidates to return (default 10).",
+                    "description": "How many candidates to return (default 10, max 30).",
                     "default": 10,
                 },
                 "source": {
                     "type": "string",
                     "enum": ["arxiv", "ss", "openalex", "all"],
-                    "description": "Which source(s) to search (default 'all').",
-                    "default": "all",
+                    "description": (
+                        "Which source(s) to search. DEFAULT 'arxiv' (stable, "
+                        "no rate limits). Use 'all' only when user explicitly "
+                        "asks for broader coverage."
+                    ),
+                    "default": "arxiv",
+                },
+                "sort": {
+                    "type": "string",
+                    "enum": ["relevance", "date"],
+                    "description": (
+                        "Ranking strategy. 'relevance' (default) for topic "
+                        "queries. 'date' for 'latest / recent / 最新' queries "
+                        "— returns newest submissions first."
+                    ),
+                    "default": "relevance",
                 },
             },
             "required": ["topic"],
@@ -354,11 +371,12 @@ def _error(exc: Exception) -> dict:
 def tool_search(
     topic: str,
     n: int = 10,
-    source: str = "all",
+    source: str = "arxiv",
+    sort: str = "relevance",
     *,
     vault_path: str,
 ) -> dict:
-    """Search arxiv + SS + OpenAlex in parallel; return ranked candidates."""
+    """Search arxiv (default) or multi-source; return ranked candidates."""
     try:
         # Clamp n — values above 30 explode the LLM rank prompt and rarely
         # produce meaningfully more useful candidates.
@@ -379,7 +397,8 @@ def tool_search(
         renderer = ConsoleRenderer(title=f"search · {topic}")
         ctx = Context(
             cfg=cfg, llm=llm, vault=vault,
-            shared={}, on_status=renderer.on_status,
+            shared={"arxiv_sort": sort},
+            on_status=renderer.on_status,
         )
         dag = DAG([
             ArxivSearcher(),

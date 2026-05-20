@@ -50,12 +50,28 @@ def _get_client():
     return _client
 
 
-def search(query: str, max_results: int = 30) -> list[ArxivPaper]:
-    """Search arxiv.org. Returns up to max_results papers ranked by relevance."""
+def search(
+    query: str,
+    max_results: int = 30,
+    sort: str = "relevance",
+) -> list[ArxivPaper]:
+    """Search arxiv.org. Returns up to max_results papers.
+
+    sort: "relevance" (default) ranks by query match;
+          "date" sorts by submission date, newest first — use this for
+          "what's the latest on X" queries.
+    """
+    if sort == "date":
+        sort_by = arxiv.SortCriterion.SubmittedDate
+        sort_order = arxiv.SortOrder.Descending
+    else:
+        sort_by = arxiv.SortCriterion.Relevance
+        sort_order = arxiv.SortOrder.Descending
     s = arxiv.Search(
         query=query,
         max_results=max_results,
-        sort_by=arxiv.SortCriterion.Relevance,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     client = _get_client()
     papers = []
