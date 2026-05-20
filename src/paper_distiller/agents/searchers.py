@@ -31,6 +31,12 @@ def _is_transient_search_error(exc: Exception) -> bool:
     )
 
 
+def _mark_degraded(ctx: Context, source: str) -> None:
+    """Append to ctx.shared['degraded_sources'] so tool_search can distinguish
+    'genuinely empty' from 'rate-limited'."""
+    ctx.shared.setdefault("degraded_sources", []).append(source)
+
+
 class ArxivSearcher:
     name = "arxiv-searcher"
     deps: list[str] = []
@@ -49,6 +55,7 @@ class ArxivSearcher:
             if _is_transient_search_error(e):
                 print(f"  arxiv search degraded ({type(e).__name__}): {str(e)[:120]}",
                       file=sys.stderr)
+                _mark_degraded(ctx, "arxiv")
                 return {"candidates_arxiv": []}
             raise
         return {"candidates_arxiv": papers}
@@ -73,6 +80,7 @@ class SemanticScholarSearcher:
             if _is_transient_search_error(e):
                 print(f"  SS search degraded ({type(e).__name__}): {str(e)[:120]}",
                       file=sys.stderr)
+                _mark_degraded(ctx, "ss")
                 return {"candidates_ss": []}
             raise
         return {"candidates_ss": papers}

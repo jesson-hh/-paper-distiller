@@ -139,6 +139,9 @@ class OpenCLIOpenAlexSearcher:
             ["openalex", "search", query, "--limit", str(limit)],
         )
         if not search_results:
+            # Mark openalex as degraded so tool_search can distinguish empty
+            # results from "all sources rate-limited" thrashing.
+            ctx.shared.setdefault("degraded_sources", []).append("openalex")
             return {"candidates_openalex": []}
 
         # Step 2: fetch detail for each (parallel, cap 5 concurrent to stay polite).
