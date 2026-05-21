@@ -30,3 +30,8 @@ MagicMock/
 
 # v1.8 — per-vault proof store (inside vault, shouldn't be committed)
 .proof_store/
+
+# Diagnostic script artifacts
+scripts/diag_proofs.db
+scripts/diag_proofs.db-*
+scripts/diag_distill_output.md
