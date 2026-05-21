@@ -1,0 +1,65 @@
+name: Bug report
+description: Report something that isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill out the sections below so it can be reproduced.
+        **Do not paste your API key or any secret** anywhere in this report.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands and/or chat input, in order.
+      placeholder: |
+        1. paper-distiller-chat --vault ./myvault
+        2. type: "distill the latest 3 papers on diffusion models"
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output / traceback
+      description: Paste the error or unexpected output. This is automatically formatted as code, so no backticks needed.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: paper-distiller version
+      description: "Run `pip show paper-distiller` and copy the Version line."
+      placeholder: "1.12.0"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: LLM provider / model
+      description: e.g. Aliyun Bailian qwen-plus, DeepSeek, etc. (No keys, just the model name.)
+      placeholder: "qwen-plus"

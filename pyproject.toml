@@ -1,19 +1,27 @@
 [project]
 name = "paper-distiller"
-version = "1.11.0"
+version = "1.12.0"
 description = "Chat-first paper distillation: turn arXiv papers into an Obsidian-ready knowledge base."
 authors = [{name = "jesson-hh", email = "xuyi1030@proton.me"}]
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.10"
-keywords = ["obsidian", "research", "arxiv", "knowledge-base", "llm", "distillation"]
+keywords = [
+    "arxiv", "obsidian", "research", "knowledge-base", "llm", "distillation",
+    "rag", "semantic-scholar", "oai-pmh", "cli", "agent", "function-calling",
+    "mathematics", "papers",
+]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Text Processing :: Markup :: Markdown",
 ]
 dependencies = [
     "httpx>=0.27",
@@ -36,6 +44,9 @@ paper-distiller-arxiv = "paper_distiller.arxiv_local.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/jesson-hh/paper-distiller"
+Repository = "https://github.com/jesson-hh/paper-distiller"
+Documentation = "https://github.com/jesson-hh/paper-distiller#readme"
+Changelog = "https://github.com/jesson-hh/paper-distiller/blob/main/CHANGELOG.md"
 Issues = "https://github.com/jesson-hh/paper-distiller/issues"
 
 [build-system]

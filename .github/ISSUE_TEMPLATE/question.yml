@@ -1,0 +1,23 @@
+name: Question / help
+description: Ask how to do something with paper-distiller
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening a question, please skim the [README](https://github.com/jesson-hh/paper-distiller#readme).
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you already tried?
+  - type: input
+    id: version
+    attributes:
+      label: paper-distiller version
+      placeholder: "1.12.0"

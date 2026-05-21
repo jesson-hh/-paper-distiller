@@ -2,6 +2,33 @@
 
 All notable changes documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.12.0] — 2026-05-21
+
+First release focused on **packaging, public API, and project hygiene** rather than new
+runtime features. No breaking changes — everything from the 1.x line keeps working unchanged.
+
+### Added
+
+- **Stable public Python API.** `paper_distiller` now exposes a curated, documented set of
+  top-level names: `Config`, `load_config`, `LLMClient`, `VaultStore`, `Entry`, `slugify`,
+  `rank`, `distill_article`, `ArticleResult`, `compose_survey`, `SurveyResult`, `ProofStore`,
+  `Theorem`, `Technique`, `ProofSidecar`, `Paper`, `ArxivPaper`, `PermissionMode`. Names are
+  imported lazily (PEP 562), so `import paper_distiller` stays cheap and never eagerly pulls
+  in heavy/optional dependencies. Anything not in `__all__` is considered internal.
+- **Contributor guide** (`CONTRIBUTING.md`): dev setup, TDD workflow, code conventions,
+  test-isolation patterns, and the release process.
+- **GitHub issue forms + pull-request template** under `.github/` (bug / feature / question).
+
+### Changed
+
+- **README** fully rewritten to match the current feature set: 7 LLM-callable tools, the
+  local arXiv mirror, the proof/technique knowledge base + cross-paper RAG, 12-section deep
+  distillation, the 5 permission modes, persistent input history, a cost table, and the
+  architecture overview.
+- **Packaging metadata** polished: `Development Status` promoted to *5 - Production/Stable*;
+  added `Environment`, `Operating System`, and `Topic` classifiers; expanded keywords; and
+  added `Repository` / `Documentation` / `Changelog` project URLs.
+
 ## [1.11.0] — 2026-05-21
 
 ### Added — Claude Code-style interactive shell upgrades

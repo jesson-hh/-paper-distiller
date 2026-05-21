@@ -1,24 +1,51 @@
 # paper-distiller
 
-> Chat-first paper distillation. Turn arXiv papers into an Obsidian-ready knowledge base — via REPL, one-shot commands, or natural language.
+> Conversational research agent for arXiv papers. Search → deep-distill → cross-reference proofs. Writes Obsidian-compatible markdown vaults.
 
 [![CI](https://github.com/jesson-hh/paper-distiller/actions/workflows/ci.yml/badge.svg)](https://github.com/jesson-hh/paper-distiller/actions/workflows/ci.yml)
 [![PyPI version](https://img.shields.io/pypi/v/paper-distiller.svg)](https://pypi.org/project/paper-distiller/)
 [![Python versions](https://img.shields.io/pypi/pyversions/paper-distiller.svg)](https://pypi.org/project/paper-distiller/)
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-436_passing-brightgreen.svg)](#)
 
-paper-distiller is a command-line tool that searches academic paper sources (arXiv + Semantic Scholar), downloads PDFs, has an LLM distill each one into a structured markdown note, and writes everything to a folder that opens directly in [Obsidian](https://obsidian.md).
+paper-distiller is a **conversational research agent** that talks to you in natural language, decides which of 7 LLM-callable tools to use, and turns arXiv papers into a deeply-distilled, cross-referenced markdown knowledge base.
 
-v1.0 ships a single `paper-distiller-chat` command with three modes:
+```
+❯ 帮我搜索最近三年关于扩散模型理论的论文，挑 5 篇蒸馏
 
-| Mode | When to use |
-|---|---|
-| **`paper-distiller-chat`** (no args) | Interactive REPL — slash commands + natural-language input |
-| **`paper-distiller-chat distill`** | One-shot: search a topic, distill N papers |
-| **`paper-distiller-chat ask`** | One-shot: ask a research question, multi-round QA loop |
-| **`paper-distiller-chat resume`** | One-shot: continue a paused/errored QA session |
+⏺ search(topic="diffusion model theory", sort="date", source="arxiv")
+● search → 30 candidates  [0.01s]                ← local mirror, zero API hit
 
-Output is plain markdown with YAML frontmatter and `[[wikilink]]` cross-references — no proprietary format, no lock-in. Graph view, Dataview, tags, and full-text search all work out of the box.
+⏺ distill_by_id(ids=[...], topic="diffusion theory")
+  paper-processor[1/5] LLM distill: Latent Diffusion Convergence...
+  paper-processor[2/5] PDF fetch: 2510.12345
+  ...
+● distill_by_id → 5 articles · 23 theorems extracted · ¥0.21  [12m]
+
+● 已蒸馏 5 篇，全部存进 vault。其中 Theorem 4.3 (arxiv:2510.12345) 用了 Bernstein
+  concentration + Dudley chaining，跟 Paper B 的 Lemma 5.1 是同一套技术——已在两篇
+  的"与已有 wiki 的关联"中互链。
+
+qwen3.5-plus  ·  54,000 ↑  12,500 ↓  ·  ¥0.2147  ·  default
+```
+
+Output is plain markdown + YAML frontmatter + `[[wikilinks]]` — opens directly in [Obsidian](https://obsidian.md), works with Dataview, graph view, full-text search.
+
+---
+
+## Features
+
+- **Conversational REPL** — natural language in, LLM decides tool calls, no flag-juggling
+- **7 LLM-callable tools** — `search` · `distill_by_id` · `show` · `ask` · `research` · `ask_user` · `find_proof`
+- **Local arXiv mirror** (~1.7M papers, ~5 GB) — bootstrap once via OAI-PMH, search forever zero-latency
+- **Deep 12-section distillation** — 3-6k Chinese chars per paper, capturing theorems / proofs / experiments / techniques in a researcher-grade lab-notebook format
+- **Cross-paper proof retrieval (RAG)** — every paper's proof sidecar (theorems + techniques) goes into a vault-local SQLite + FTS5 store; future distillations retrieve relevant prior theorems and feed them to the LLM as context, so notation + technique naming converges across the vault
+- **Three-way candidate gathering** — hardcoded keyword scan + FTS5 abstract match + LLM pre-extract → cap-and-merge retrieval
+- **Multi-source fallback** — arxiv (live + local mirror) / Semantic Scholar / OpenAlex with global per-source throttle + 429 cooldown
+- **5 permission modes** — `default` / `auto` / `bypass` / `plan` / `safe`, controlling plan-mode preview behavior
+- **Persistent input history** — ↑/↓ navigate past prompts across sessions, Ctrl-R reverse search (prompt_toolkit)
+- **Streaming output + spinners** — incremental text, per-agent activity reporting, abort with Ctrl-C
+- **Cost tracking** — per-turn + session-wide token + ¥ display, configurable budget gates
 
 ---
 
@@ -28,283 +55,302 @@ Output is plain markdown with YAML frontmatter and `[[wikilink]]` cross-referenc
 pip install paper-distiller
 ```
 
-Requires Python 3.10+. From source:
+Requires Python **3.10+**. From source:
 
 ```bash
 git clone https://github.com/jesson-hh/paper-distiller
 cd paper-distiller
 pip install -e ".[dev]"
+pytest -v       # 436 tests should pass
 ```
 
 ---
 
 ## Configure
 
-paper-distiller needs an OpenAI-compatible LLM endpoint. Cheapest reliable option: Aliyun Bailian's `qwen-plus` (~¥0.02 per paper).
+paper-distiller needs an OpenAI-compatible LLM endpoint. Cheapest reliable option: Aliyun Bailian's `qwen-plus` (~¥0.04 per paper at v1.7+ depth).
 
 ```bash
 cp examples/example.env .env
 # Edit .env — set PD_API_KEY, PD_BASE_URL, PD_MODEL
 ```
 
-| Env var | Required | Default | Purpose |
-|---|---|---|---|
-| `PD_API_KEY` | ✓ | — | Any OpenAI-compatible API key |
-| `PD_BASE_URL` | ✓ | — | API endpoint base URL |
-| `PD_MODEL` | ✓ | — | Model identifier |
-| `PD_PROVIDER_NAME` |   | `unspecified` | Logging tag only |
-| `PD_PDF_TIMEOUT` |   | `60` | PDF download timeout (seconds) |
-| `PD_MIN_SURVEY` |   | `2` | Min articles before composing a session survey |
-| `PD_SS_API_KEY` |   | (none) | Optional — higher Semantic Scholar rate limit |
-
 ### Provider quick reference
 
 | Provider | `PD_BASE_URL` | `PD_MODEL` |
 |---|---|---|
-| **Aliyun Bailian** (recommended) | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
-| Aliyun Bailian (coding plan) | `https://coding.dashscope.aliyuncs.com/v1` | `qwen3.5-plus` |
+| **Aliyun Bailian** (default) | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
+| Aliyun coding plan | `https://coding.dashscope.aliyuncs.com/v1` | `qwen3.5-plus` |
 | DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
 | OpenRouter | `https://openrouter.ai/api/v1` | `qwen/qwen3.5-plus` |
 | Local Ollama | `http://localhost:11434/v1` | `qwen2.5` |
 
+### Configuration env vars
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PD_API_KEY` ✱ | — | LLM API key |
+| `PD_BASE_URL` ✱ | — | LLM endpoint base |
+| `PD_MODEL` ✱ | — | Model identifier |
+| `PD_PERMISSION_MODE` | `default` | Startup mode: `default`/`auto`/`bypass`/`plan`/`safe` |
+| `PD_PLAN_THRESHOLD_CNY` | `10.0` | Plan-mode kicks in above this cost |
+| `PD_LLM_TIMEOUT` | `600` | LLM read timeout (s); deep distillations can take 3-5 min |
+| `PD_FANOUT_CONCURRENCY` | `5` | Parallel LLM calls during multi-paper distill |
+| `PD_ARXIV_LOCAL_ONLY` | `0` | If `1`, never fall back to live arXiv API |
+| `PD_ARXIV_LOCAL_DIR` | `~/.paper-distiller/arxiv` | Local mirror DB location |
+| `PD_HISTORY_FILE` | `~/.paper-distiller/history.jsonl` | Input history file |
+| `PD_SS_API_KEY` | (none) | Semantic Scholar API key (raises rate limit ~100×) |
+
+✱ required. Full list in [docs/configuration.md](docs/configuration.md).
+
 ---
 
-## Use it
+## Quick start
 
-### Interactive REPL (recommended)
+### 1. One-time arXiv mirror bootstrap (optional but recommended)
+
+```bash
+paper-distiller-arxiv bootstrap --since 2020-01-01
+# ~2 hours, ~3 GB. Pulls ~600k papers via OAI-PMH. Auto-resumes on SSL errors.
+```
+
+Without this, `search` falls back to live arXiv API (rate-limited).
+After bootstrap, search hits a local SQLite + FTS5 index at <10 ms.
+
+### 2. Launch the conversational REPL
 
 ```bash
 paper-distiller-chat --vault /path/to/your/vault
 ```
 
-You see a welcome banner with provider + vault info, then a prompt. Type slash commands or natural language:
+You'll see a welcome banner with version, vault, model, and current permission mode. Then talk to it:
 
 ```
-> /help
-[command list]
-
-> /vault
-Vault: /path/to/your/vault
-  articles: 47
-  surveys: 6
-  ...
-
-> /distill diffusion models --n 3
-[live status table during execution]
-
-> 帮我研究下扩散模型在长周期金融时序生成上的最新进展
-[intent-router] Intent: ask  | confidence 9
-  question: 扩散模型在长周期金融时序生成上的最新进展
-Missing: max_rounds, per_round, max_cost_cny
-Apply defaults (max_rounds=3, per_round=2, max_cost_cny=5.0) and run? [Y/n]
-> Y
-[live status table for 3-round QA loop]
-
-> /quit
-  (bye)
+❯ 给我介绍一下 yuling jiao 最近五年的代表论文
+❯ /mode plan                                  # require my OK before any tool
+❯ 帮我深度研究扩散模型理论 (research)
+❯ vault 里哪些定理用了 Bernstein 不等式？      # → calls find_proof
+❯ /cost
+❯ /exit
 ```
 
-10 slash commands available: `/distill`, `/ask`, `/resume`, `/sessions`, `/vault`, `/provider`, `/agents`, `/show`, `/help`, `/quit`.
+`↑` / `↓` cycles through past prompts (across sessions).
+Ctrl-C cancels a running tool (conversation continues).
+Twice within 1.5s exits the REPL.
 
-Natural-language input goes through an LLM intent-router that classifies into one of `distill`/`ask`/`resume`/`show` and proposes defaults for any missing parameters. You confirm before any expensive operation runs.
-
-### One-shot mode (good for scripts / cron)
-
-**Distill N papers on a topic:**
+### 3. Single-shot mode (for scripts / cron)
 
 ```bash
-paper-distiller-chat distill --vault /path/to/your/vault \
-    --topic "diffusion models for finance" --n 5
+# Distill 5 papers
+paper-distiller-chat distill --vault X --topic "diffusion theory" --n 5
+
+# Multi-round QA
+paper-distiller-chat ask --vault X --question "近期扩散模型的收敛速率怎样？" --max-rounds 5
+
+# Long deep research (5-phase loop)
+paper-distiller-chat research --vault X --question "..." --duration 6h --max-papers 40
 ```
 
-**Answer a question across multiple rounds:**
+---
+
+## The 7 LLM-callable tools
+
+| Tool | Purpose |
+|---|---|
+| `search(topic, n, source, sort)` | Find papers — defaults to local arXiv mirror |
+| `distill_by_id(ids, topic)` | Download PDFs + 12-section deep distill + sidecar |
+| `show(slug, category)` | Read a vault entry back |
+| `ask(question, ...)` | Multi-round QA loop: search → distill → reflect |
+| `research(question, ...)` | Long-running 5-phase deep research (default 6h, 40 papers) |
+| `ask_user(question, options)` | Pause and let the user pick between 2-4 options |
+| `find_proof(query_type, query)` | Query the vault's accumulated theorem / technique knowledge base |
+
+System prompt steers the LLM to use these autonomously. See [docs/tools.md](docs/tools.md) for full schemas.
+
+---
+
+## What a distilled article looks like
+
+Every paper produces a **12-section markdown entry** with this structure:
+
+```markdown
+# 双向 GAN 的非渐近误差界
+
+> **场合**: NeurIPS 2021
+> **主题**: 首次为 BiGAN 提供联合分布匹配下的非渐近误差界理论保证
+> **领域**: 理论机器学习 / 统计学习理论
+
+## TL;DR (一句话)
+本文首次为双向 GAN (BiGAN) 提供了基于 Dudley 距离的非渐近误差界...
+
+## 1. 问题动因
+传统 GAN 理论分析存在三个显著脱离实际的假设：(1) 维度匹配；(2) 紧支撑...
+
+## 2. 设定与记号
+- **目标分布** $\mu$：支撑在 $\mathbb{R}^d$ 上的数据分布
+- **联合分布**：$\hat{\nu} = \tilde{g}\#\nu$，$\hat{\mu} = \tilde{e}\#\mu$
+- **核心假设**: $\mathcal{F}_1$ 一致有界 1-Lipschitz...
+
+## 3. 核心方法
+### 3.1 主要思想
+### 3.2 算法/构造
+### 3.3 理论分析
+
+## 4. 关键定理 / 命题
+**Theorem 4.3** (Cross-Dimensional Empirical Pushforward): ...
+*Proof sketch*: ...
+
+## 5. 实验设置
+- 数据集: CelebA-HQ (256×256), CIFAR-10
+- 基线: BiGAN-baseline, ALI, ALAE
+- 评估指标: FID, Inception Score
+- 资源: 8× V100, 训练 72 小时
+
+## 6. 关键结果
+- 在 CelebA-HQ 上 FID 从 18.4 降到 12.7 (-31%)
+- 证明了 $O(n^{-1/2})$ 而非 $O(n^{-1/4})$
+
+## 7. 消融与敏感性
+## 8. 局限与失败模式
+## 9. 与已有 wiki 的关联       ← [[wikilinks]] to other distilled papers
+## 10. 复现要点
+## 11. 我的 take
+## 12. 引用网络 (可选)
+```
+
+Plus a **`proof_sidecar` JSON** stored in `.proof_store/proofs.db`:
+
+```json
+{
+  "theorems": [
+    {
+      "name": "Theorem 4.3",
+      "statement": "...",
+      "proof_sketch": "...",
+      "techniques_used": ["Bernstein", "Dudley chaining", "ReLU approximation"]
+    }
+  ],
+  "key_techniques": ["Bernstein", "IPM duality", "ReLU approximation", ...]
+}
+```
+
+When you later distill a related paper, the LLM **automatically receives** prior theorems whose techniques overlap — keeping notation and citation patterns coherent across the vault.
+
+---
+
+## Permission modes
+
+```
+❯ /mode
+current permission_mode: default
+available modes: default, auto, bypass, plan, safe
+
+  default   show plan-mode preview for tools >= ¥10 (auto-proceed after 5s)
+  auto      skip plan-mode previews entirely
+  bypass    same as auto (reserved for future destructive-op gates)
+  plan      ALWAYS show plan preview, wait for explicit Enter / q
+  safe      like plan, but at ¥0 threshold (every tool prompts)
+
+❯ /mode plan
+permission_mode → plan
+```
+
+The status line color-codes the current mode:
+
+- `default` — dim
+- `auto` — yellow
+- `bypass` — **bold red** (signal: dangerous)
+- `plan` — cyan
+- `safe` — bold green
+
+---
+
+## Local arXiv mirror
 
 ```bash
-paper-distiller-chat ask --vault /path/to/your/vault \
-    --question "What are recent advances in long-horizon time-series diffusion?" \
-    --max-rounds 3 --per-round 2 --max-cost-cny 5
+paper-distiller-arxiv bootstrap [--since 2020-01-01] [--source auto|oai_pmh|internet_archive|kaggle]
+paper-distiller-arxiv sync [--since DATE]      # daily increment
+paper-distiller-arxiv search "diffusion" --n 10 --sort date --category cs.LG
+paper-distiller-arxiv stats                    # papers count, db size, last sync
+paper-distiller-arxiv doctor                   # diagnose integrity + connectivity
 ```
 
-**Resume a paused / errored session:**
-
-```bash
-paper-distiller-chat resume --vault /path/to/your/vault \
-    --session-id 20260519-1635-a3f7
-```
-
-Use `--dry-run` on any subcommand to validate config without spending API budget.
-
-### Helpful flags
-
-```
-paper-distiller-chat [--vault PATH]
-                     {distill | ask | resume}
-                     [subcommand-specific flags]
-```
-
-`paper-distiller-chat distill --help` etc. show every flag for that subcommand.
-
----
-
-## What you get — a sample distilled article
-
-````markdown
----
-title: "Convergence Rates of Conditional Flow Matching..."
-category: articles
-slug: cnf-convergence
-tags: [generative-models, theory, distribution-estimation, arxiv-2024]
-refs: [arxiv:2410.12345]
-depth: full-pdf
----
-
-# CFM 的样本复杂度上界
-
-> **场合**: arxiv preprint, 2024 Oct
-> **主题**: 给 CFM 训练给出第一个匹配 nonparametric minimax rate 的有限样本界
-> **领域**: 统计 / 生成模型理论
-
-## 一句话
-作者证明 CFM 训练在 $\beta$-平滑目标密度下达到 $n^{-\beta/(2\beta+d)}$ 的 $W_2$ 收敛速度…
-
-## 方法
-核心是把 vector-field 估计误差 decompose 成 (1) approximation error 由 $\beta$-Hölder ball
-覆盖控制 (2) statistical error 用 local Rademacher 处理 (3) discretization error 显式给…
-
-## 与已有 wiki 的关联
-对 [[cnf-convergence-distribution-learning]] 的分析路线是个自然的强化…
-
-## 我的 take
-最有意思的是 time-singularity 在 CFM 训练里其实从未出现…
-````
-
-Open the vault in Obsidian and this article cross-links automatically with everything else you've distilled.
-
----
-
-## Vault layout
-
-paper-distiller writes into a vault with these subdirectories (auto-created on first run):
-
-| Directory | Auto-written by tool | Description |
-|---|---|---|
-| `articles/` | ✓ | One file per paper |
-| `surveys/` | ✓ | Multi-article surveys + `qa-…` final answer docs |
-| `techniques/`, `directions/`, `open-problems/`, `authors/` | — | Reserved for human-curated notes |
-
-QA sessions persist resume state at `<vault>/.paper_distiller/qa-sessions/<sid>/state.json`.
-
----
-
-## How it works
-
-paper-distiller v1.0 is built around an async DAG of sub-agents:
-
-```
-Single-pass (distill):
-  arxiv-searcher  ss-searcher          (parallel)
-        └────┬────┘
-        candidate-merger
-              │
-        candidate-ranker (LLM)
-              │
-        paper-processor × N            (parallel: fetch PDF → extract → distill LLM)
-              │
-        vault-writer
-              │
-        survey-composer (LLM, optional)
-
-Multi-round (ask):
-  ┌──────────────────────────────────────────────────────┐
-  │  progress-reflector (LLM)                             │
-  │      ↓                                                │
-  │  [stop check: max_rounds / llm_done / llm_brake / ...] │
-  │      ↓                                                │
-  │  search → dedup → rank → distill × N → write          │
-  └────────────────────────────────────────────────────────┘
-                          ↓
-                  answer-synthesizer (LLM) → surveys/qa-<slug>-<date>.md
-```
-
-11 agents, 4 stop reasons in QA mode, all wired together by a topological-level scheduler. For module structure, full data flow, and internal contracts, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The mirror uses SQLite + FTS5 + BM25 for keyword + ranked retrieval, all local. Built-in author-search fallback when FTS5 misses on title/abstract.
 
 ---
 
 ## Cost
 
-Aliyun Bailian `qwen-plus` pricing — roughly ¥2.1/M input tokens, ¥12.7/M output tokens.
+Each deep distillation uses ~20-30k input tokens (paper full text) and ~10k output tokens. At qwen-plus rates (¥0.8/M in, ¥2.0/M out):
 
-| Operation | Typical cost |
-|---|---|
-| 1 paper distilled | ~¥0.02 (~$0.003) |
-| 5-paper single-pass + survey | ~¥0.7 (~$0.10) |
-| 3-round QA session @ 2 papers/round | ~¥1.5–3 |
-| 5-round QA session @ 3 papers/round | ~¥4–8 |
+| Operation | Typical cost | Time |
+|---|---|---|
+| 1 paper distilled (v1.7+ deep) | ~¥0.04 | ~3 min |
+| 5-paper survey | ~¥0.21 | ~5-10 min (5-way concurrent) |
+| `ask` 5 rounds × 3 papers | ~¥1-3 | ~15-25 min |
+| `research` 6h budget, 40 papers | ~¥2-5 | ~1 hour (with local mirror) |
 
-`paper-distiller-chat ask` enforces `--max-cost-cny` (default ¥20). The cost number is for the circuit breaker — not billing-accurate.
-
----
-
-## Customize the output
-
-All 6 LLM prompts are plain markdown — edit them to change tone, structure, or output language. No Python changes needed.
-
-- `src/paper_distiller/prompts/{filter,article,survey}.md` — distill mode
-- `src/paper_distiller/agents/prompts/route.md` — intent router
-- `src/paper_distiller/qa/prompts/{reflect,answer}.md` — QA mode
-
-Defaults produce **Chinese-primary** notes with this 5-section structure: 一句话 / 问题动因 / 方法 / 关键结果 / 我的 take.
+Configurable via `--max-cost-cny` flags + global `PD_PLAN_THRESHOLD_CNY` env. Plan-mode shows a budget preview before any tool over the threshold runs.
 
 ---
 
-## Optional companion: semantic search via vault-mcp
+## Architecture
 
-paper-distiller does NOT ship its own semantic-search engine for your vault. To search by meaning (not keywords) from Claude Code, Cursor, or any MCP-aware agent, pair it with [**vault-mcp**](https://github.com/robbiemu/vault-mcp).
+```
+┌─────────────────────────────────────────────────────────────┐
+│ AgentLoop (chat/agent_loop.py)                              │
+│   prompt_toolkit input → 7 LLM tools → streaming output     │
+└──────────────────┬──────────────────────────────────────────┘
+                   ↓ tool call
+┌─────────────────────────────────────────────────────────────┐
+│ Async DAG orchestrator (agents/orchestrator.py)             │
+│   topological scheduling + asyncio.Semaphore fanout cap     │
+└─────┬────────────────────┬──────────────────┬───────────────┘
+      ↓                    ↓                  ↓
+┌──────────────┐  ┌──────────────────┐  ┌─────────────────┐
+│ search/      │  │ paper-processor  │  │ vault-writer    │
+│ arxiv-local  │  │ × N concurrent   │  │ proof-store     │
+│ → 7 agents   │  │ → fetch+distill  │  │ → SQLite + md   │
+└──────────────┘  └──────────────────┘  └─────────────────┘
+```
 
-See [docs/vault-mcp-recommendation.md](docs/vault-mcp-recommendation.md) for setup and rationale.
+Full module map and data flow: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
-## Status & roadmap
+## Vault layout
 
-**v1.0.0 — beta.** Chat-first architecture stable; 168 tests passing on Python 3.10 / 3.11 / 3.12.
+```
+your-vault/
+├── articles/         # one .md + .html per distilled paper
+├── surveys/          # multi-paper syntheses, qa-* final answers
+├── techniques/       # reserved for hand-curated notes
+├── directions/
+├── open-problems/
+├── authors/
+└── .proof_store/
+    └── proofs.db     # SQLite + FTS5 of extracted theorems
+```
 
-### Migration from v0.5
-
-| v0.5.x | v1.0 |
-|---|---|
-| `paper-distiller --topic X --n N` | `paper-distiller-chat distill --topic X --n N` |
-| `paper-distiller-qa --question Y --max-rounds R` | `paper-distiller-chat ask --question Y --max-rounds R` |
-| (no resume command) | `paper-distiller-chat resume --session-id <sid>` |
-| (no interactive mode) | `paper-distiller-chat` (no subcommand) |
-
-Flag names and defaults are otherwise preserved. See [CHANGELOG](CHANGELOG.md) for full details.
-
-### Coming
-
-- **v1.1** — citation-graph traversal: given a seed article, follow references / cited-by edges and rank them for inclusion.
-- **v1.2** — broaden sources beyond arxiv + SS: integrate browser-session scraping for ACM, IEEE, 知乎 etc.
-- **Later** — per-vault `paper-distiller.toml` for custom category schemas; LEANN in-pipeline crosslink retrieval for vaults > 500 entries.
-
-### Known limitations
-
-- arxiv.org and Semantic Scholar occasionally rate-limit (HTTP 429); QA sessions exit with `error: search failed` (resumable via `paper-distiller-chat resume <sid>`).
-- Scanned-only PDFs fall through to abstract-only mode (PyMuPDF doesn't OCR — by design we flag rather than silently distill wrong text).
+Markdown is Obsidian-compatible. HTML siblings have MathJax for LaTeX.
 
 ---
 
 ## Contributing
 
-Issues and PRs welcome.
+PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, test workflow, and conventions.
 
-```bash
-git clone https://github.com/jesson-hh/paper-distiller
-cd paper-distiller
-pip install -e ".[dev]"
-pytest -v
-```
+Issues: [GitHub Issues](https://github.com/jesson-hh/paper-distiller/issues) (templates for bug / feature / question).
 
-CI runs the same matrix on every PR. For a tour of the codebase, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Security disclosures: see [SECURITY.md](SECURITY.md).
+
+Code of conduct: [Contributor Covenant 2.1](CODE_OF_CONDUCT.md).
+
+---
+
+## Citation
+
+If you use paper-distiller in academic work, please cite via [CITATION.cff](CITATION.cff).
 
 ---
 
