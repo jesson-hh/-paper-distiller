@@ -61,8 +61,18 @@ class LLMClient:
         api_key: str,
         base_url: str,
         model: str,
-        timeout: float = 120.0,
+        timeout: float = 600.0,
     ):
+        # v1.7: 600s default — deep distillation produces 3-6k Chinese chars
+        # of output which qwen3.5-plus can take 4-6 minutes for. Old 120s
+        # default caused ReadTimeout mid-call. Override via PD_LLM_TIMEOUT.
+        import os
+        env_to = os.getenv("PD_LLM_TIMEOUT")
+        if env_to:
+            try:
+                timeout = float(env_to)
+            except ValueError:
+                pass
         if not api_key:
             raise ValueError("api_key is required")
         self.api_key = api_key
