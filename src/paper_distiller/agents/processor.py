@@ -72,6 +72,102 @@ def _extract_candidate_techniques(paper) -> list[str]:
     return found
 
 
+# Strategy C: cheap dedicated LLM call to extract candidate techniques
+# from title+abstract. ~150 tokens out per paper, ~¥0.005, ~5-10s.
+# Disable via PD_LLM_TECH_EXTRACT=0 if cost matters.
+_TECH_EXTRACT_PROMPT = """\
+List 5-10 specific mathematical techniques, inequalities, or theoretical \
+frameworks this paper LIKELY uses. Use canonical short English names \
+(e.g. 'Hölder inequality', 'Bernstein concentration', 'Rademacher complexity', \
+'Wasserstein distance', 'Fenchel duality', 'Lipschitz extension'). One per \
+line, no numbering, no explanations.
+
+Title: {title}
+Abstract: {abstract}
+"""
+
+
+def _llm_extract_techniques(paper, llm) -> list[str]:
+    """Strategy C: LLM extracts candidate techniques from abstract alone.
+
+    Catches papers whose abstract doesn't mention the specific technique
+    by name but where an LLM can infer (e.g. "we prove convergence rate
+    for the GAN estimator" → Bernstein concentration, Dudley chaining).
+
+    Returns up to 15 technique names. Returns [] on any error.
+    """
+    import os
+    if os.getenv("PD_LLM_TECH_EXTRACT", "1").lower() in ("0", "false", ""):
+        return []
+    title = getattr(paper, "title", "") or ""
+    abstract = getattr(paper, "abstract", "") or ""
+    if not (title or abstract):
+        return []
+    prompt = _TECH_EXTRACT_PROMPT.format(title=title, abstract=abstract[:2000])
+    try:
+        raw = llm.complete(
+            [{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+    except Exception:
+        return []
+    techs: list[str] = []
+    for line in (raw or "").strip().split("\n"):
+        line = line.strip().lstrip("-*•").lstrip("0123456789.) ").strip()
+        # Drop trailing parens with explanation, e.g. "Hölder (Sec 3)"
+        if "(" in line:
+            line = line.split("(")[0].strip()
+        if line and 3 <= len(line) <= 60:
+            techs.append(line)
+    return techs[:15]
+
+
+def _gather_candidate_techniques(paper, proof_store, llm=None) -> list[str]:
+    """Combine 3 strategies for finding candidate techniques.
+
+    A: hardcoded keyword scan + augment with vault-learned canonical names
+    B: NOT here (B is FTS5 text match, done separately at retrieval time)
+    C: optional LLM pre-extract from abstract
+
+    Returns deduplicated list. Order: hardcoded → vault-learned → LLM
+    (so retrieve_relevant tries cheapest/most-reliable first).
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(name: str) -> None:
+        key = name.lower().strip()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(name)
+
+    # A.1 — hardcoded
+    for t in _extract_candidate_techniques(paper):
+        _add(t)
+
+    # A.2 — augment with store-known canonical names that appear in abstract
+    if proof_store is not None:
+        try:
+            haystack = (
+                (getattr(paper, "title", "") or "") + " "
+                + (getattr(paper, "abstract", "") or "")
+            ).lower()
+            for name in proof_store.list_canonical_technique_names(limit=500):
+                if not name:
+                    continue
+                if name.lower() in haystack:
+                    _add(name)
+        except Exception:
+            pass
+
+    # C — LLM pre-extract (skip if disabled by env or no llm)
+    if llm is not None:
+        for t in _llm_extract_techniques(paper, llm):
+            _add(t)
+
+    return out
+
+
 class _DistillOne:
     def __init__(self, paper, idx, total, tmpdir, wiki_index, proof_store):
         self.name = f"paper-processor[{idx + 1}/{total}]"
@@ -95,25 +191,68 @@ class _DistillOne:
                 fetch_with_fallback, self._paper, ctx.cfg, self._tmpdir,
             )
 
-            # Pre-fetch relevant prior theorems from the ProofStore
+            # Pre-fetch relevant prior theorems from the ProofStore using
+            # 3 complementary strategies (v1.9):
+            #   A. hardcoded keyword scan + vault-learned canonical names
+            #   B. FTS5 BM25 match of title+abstract against theorem corpus
+            #   C. optional LLM-extracted candidate techniques
+            # Merge + dedupe, cap at max_total.
             prior_theorems = []
             if self._proof_store is not None:
-                candidates = _extract_candidate_techniques(self._paper)
+                try:
+                    ctx.on_status(self.name, activity="proof RAG: gathering candidates")
+                except Exception:
+                    pass
+
+                candidates = await asyncio.to_thread(
+                    _gather_candidate_techniques,
+                    self._paper, self._proof_store, ctx.llm,
+                )
+                by_technique = []
                 if candidates:
                     try:
-                        ctx.on_status(
-                            self.name,
-                            activity=f"proof RAG: {len(candidates)} candidate techniques",
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        prior_theorems = await asyncio.to_thread(
+                        by_technique = await asyncio.to_thread(
                             self._proof_store.retrieve_relevant,
                             candidates,
                         )
                     except Exception:
-                        prior_theorems = []
+                        by_technique = []
+
+                # Strategy B — FTS5 match over title + abstract text
+                by_text = []
+                try:
+                    haystack = " ".join([
+                        getattr(self._paper, "title", "") or "",
+                        getattr(self._paper, "abstract", "") or "",
+                    ])
+                    by_text = await asyncio.to_thread(
+                        self._proof_store.retrieve_by_text_match,
+                        haystack, 6,
+                    )
+                except Exception:
+                    by_text = []
+
+                # Merge + dedupe (preserve order: technique-matches first)
+                seen_ids: set = set()
+                for thm in by_technique + by_text:
+                    if thm.id is None or thm.id in seen_ids:
+                        continue
+                    seen_ids.add(thm.id)
+                    prior_theorems.append(thm)
+                    if len(prior_theorems) >= 12:
+                        break
+
+                try:
+                    ctx.on_status(
+                        self.name,
+                        activity=(
+                            f"proof RAG: {len(candidates)} candidates · "
+                            f"{len(prior_theorems)} prior theorems "
+                            f"(technique:{len(by_technique)} + text:{len(by_text)})"
+                        ),
+                    )
+                except Exception:
+                    pass
 
             try:
                 ctx.on_status(

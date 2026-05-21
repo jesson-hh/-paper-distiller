@@ -13,6 +13,23 @@ from typing import Iterable
 SCHEMA_VERSION = 1
 
 
+# Used by retrieve_by_text_match to filter noise tokens before FTS5 OR query
+_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "at",
+    "for", "with", "from", "by", "as", "is", "are", "was", "were", "be",
+    "been", "being", "have", "has", "had", "do", "does", "did", "will",
+    "would", "should", "could", "may", "might", "must", "shall", "can",
+    "this", "that", "these", "those", "we", "our", "their", "they", "it",
+    "its", "such", "more", "most", "less", "very", "much", "many", "any",
+    "all", "some", "no", "not", "only", "than", "then", "so", "also",
+    "we", "paper", "abstract", "introduction", "conclusion",
+    "method", "methods", "results", "discussion", "section",
+    "show", "shows", "shown", "showing", "obtain", "obtained", "provide",
+    "novel", "new", "based", "using", "use", "used", "approach",
+    "model", "models", "data", "result", "study", "studies",
+}
+
+
 @dataclass
 class Theorem:
     """One theorem / proposition extracted from a paper."""
@@ -309,6 +326,61 @@ class ProofStore:
                 if len(out) >= max_total:
                     break
         return out
+
+    def retrieve_by_text_match(
+        self, text: str, limit: int = 6,
+    ) -> list[Theorem]:
+        """Strategy B: FTS5 BM25 match between arbitrary text (e.g. a new
+        paper's title + abstract) and stored theorem statements + proof
+        sketches. Catches relevant prior work when the keyword scan misses
+        because the new paper's abstract uses different vocabulary.
+
+        Tokenizes the input, keeps alphabetic tokens 3-50 chars, drops common
+        stopwords, runs FTS5 OR query over the top 30 tokens.
+        """
+        if not text.strip():
+            return []
+        tokens: list[str] = []
+        seen_words: set[str] = set()
+        for w in text.split()[:300]:
+            clean = w.strip('".,!?()[]{}<>:;')
+            clean = clean.replace('"', "")
+            if not (3 <= len(clean) <= 50):
+                continue
+            if not clean.isalpha():
+                continue
+            lower = clean.lower()
+            if lower in _STOPWORDS or lower in seen_words:
+                continue
+            seen_words.add(lower)
+            tokens.append(f'"{clean}"')
+        if not tokens:
+            return []
+        # FTS5 OR query over first 30 distinct tokens
+        fts_query = " OR ".join(tokens[:30])
+        try:
+            rows = self._conn.execute(
+                """SELECT t.*, bm25(theorems_fts) AS score
+                   FROM theorems t
+                   JOIN theorems_fts ON theorems_fts.rowid = t.id
+                   WHERE theorems_fts MATCH ?
+                   ORDER BY score
+                   LIMIT ?""",
+                (fts_query, limit),
+            ).fetchall()
+        except Exception:
+            # FTS5 parse error — return empty rather than crash distill
+            return []
+        return [self._row_to_theorem(r) for r in rows]
+
+    def list_canonical_technique_names(self, limit: int = 500) -> list[str]:
+        """Strategy A: the list of all technique names we've ever seen,
+        used to augment hardcoded keyword scan with vault-learned names."""
+        rows = self._conn.execute(
+            "SELECT name FROM techniques ORDER BY name LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [r["name"] for r in rows]
 
     # ------------------------------------------------------------------
     # Internal

@@ -2,6 +2,54 @@
 
 All notable changes documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.0] — 2026-05-21
+
+### Added — three-way RAG retrieval for proof context
+
+v1.8 introduced cross-paper RAG injection but only used a hardcoded ~50-name
+keyword scan over the abstract. Many math papers don't mention specific
+technique names in their abstracts, so RAG was firing on too few papers.
+v1.9 adds two more retrieval strategies so coverage stays high as the
+proof store grows.
+
+- **Strategy A (extended) — store-augmented keyword scan**: in addition to
+  the hardcoded list, scan the abstract against every technique name ever
+  registered in the ProofStore. As the vault accumulates papers and the
+  store learns more canonical technique names, the keyword scan auto-grows.
+- **Strategy B — FTS5 text match**: `ProofStore.retrieve_by_text_match(text)`
+  runs a BM25 query against `theorems_fts` (statement + proof_sketch +
+  name) using tokens from the new paper's title + abstract. Catches
+  relevant prior theorems when the new paper's vocabulary doesn't match any
+  registered technique name. Stop-word filtered, deduplicated, capped.
+- **Strategy C — LLM pre-extract**: a small dedicated LLM call before main
+  distillation asks the model to list 5-10 specific math techniques the
+  paper likely uses. Catches papers where the abstract is high-level
+  ("conditional sampling") but the techniques are inferable (f-divergence,
+  Pinsker, Fenchel duality). Opt-out via `PD_LLM_TECH_EXTRACT=0`. Adds
+  ~¥0.005 + ~5-10s per paper.
+
+`PaperProcessor._DistillOne.run` now combines all three sources:
+1. `_gather_candidate_techniques(paper, store, llm)` → A + C union
+2. `store.retrieve_relevant(candidates)` → theorems indexed by technique
+3. `store.retrieve_by_text_match(title + abstract)` → theorems by FTS match
+4. Merge + dedupe (technique-matches first), cap 12 theorems
+
+The progress activity now reports `proof RAG: N candidates · M prior theorems
+(technique:X + text:Y)` so you can see all 3 strategies' contributions live.
+
+### Internal
+
+- New helpers: `_llm_extract_techniques(paper, llm)`, `_gather_candidate_techniques`,
+  `ProofStore.retrieve_by_text_match`, `ProofStore.list_canonical_technique_names`
+- `_STOPWORDS` constant in store.py for FTS5 token filtering
+- **+9 new tests** in `tests/proofs/test_three_way_retrieval.py`. Total: **401**.
+
+### Backward compatibility
+
+- `_extract_candidate_techniques` (the simple v1.8 helper) is kept and still
+  used internally. v1.8 behavior is the lower bound of v1.9 retrieval.
+- `PD_LLM_TECH_EXTRACT=0` disables Strategy C if cost matters.
+
 ## [1.8.0] — 2026-05-21
 
 ### Added — proof / technique knowledge base + cross-paper RAG

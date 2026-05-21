@@ -1,6 +1,6 @@
 [project]
 name = "paper-distiller"
-version = "1.8.0"
+version = "1.9.0"
 description = "Chat-first paper distillation: turn arXiv papers into an Obsidian-ready knowledge base."
 authors = [{name = "jesson-hh", email = "xuyi1030@proton.me"}]
 license = {text = "MIT"}
