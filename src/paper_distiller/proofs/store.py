@@ -46,6 +46,25 @@ class Theorem:
 
 
 @dataclass
+class Node:
+    """One node in the proof graph (theorem/lemma/def/assumption/step/claim)."""
+    paper_arxiv_id: str
+    kind: str
+    text: str
+    paper_slug: str | None = None
+    label: str | None = None
+    source_quote: str | None = None
+    loc: str | None = None            # JSON string, e.g. '{"sec":"3.2","char":4120}'
+    status: str = "extracted"
+    confidence: float | None = None
+    parent_id: int | None = None
+    ord: int | None = None
+    techniques: list = field(default_factory=list)
+    id: int | None = None
+    created_at: str | None = None
+
+
+@dataclass
 class Technique:
     """Canonical name for a math technique / inequality / framework."""
     name: str  # canonical short form, e.g. "Hölder"
@@ -245,6 +264,56 @@ class ProofStore:
 
     def close(self) -> None:
         self._conn.close()
+
+    # ------------------------------------------------------------------
+    # Graph node CRUD
+    # ------------------------------------------------------------------
+
+    def add_node(self, node: Node) -> int:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        cur = self._conn.execute(
+            "INSERT INTO nodes(paper_arxiv_id, paper_slug, kind, label, text, "
+            "source_quote, loc, status, confidence, parent_id, ord, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (node.paper_arxiv_id, node.paper_slug, node.kind, node.label, node.text,
+             node.source_quote, node.loc, node.status, node.confidence,
+             node.parent_id, node.ord, now),
+        )
+        node_id = cur.lastrowid
+        for t in node.techniques or []:
+            if isinstance(t, str) and t.strip():
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO node_techniques(node_id, technique) "
+                    "VALUES (?, ?)",
+                    (node_id, t.strip()),
+                )
+        self._conn.commit()
+        return node_id
+
+    def _row_to_node(self, row) -> Node:
+        techs = [r["technique"] for r in self._conn.execute(
+            "SELECT technique FROM node_techniques WHERE node_id=? ORDER BY technique",
+            (row["id"],),
+        )]
+        return Node(
+            id=row["id"], paper_arxiv_id=row["paper_arxiv_id"],
+            paper_slug=row["paper_slug"], kind=row["kind"], label=row["label"],
+            text=row["text"], source_quote=row["source_quote"], loc=row["loc"],
+            status=row["status"], confidence=row["confidence"],
+            parent_id=row["parent_id"], ord=row["ord"],
+            techniques=techs, created_at=row["created_at"],
+        )
+
+    def get_node(self, node_id: int) -> Node | None:
+        row = self._conn.execute(
+            "SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
+        return self._row_to_node(row) if row else None
+
+    def nodes_by_paper(self, paper_arxiv_id: str) -> list[Node]:
+        rows = self._conn.execute(
+            "SELECT * FROM nodes WHERE paper_arxiv_id=? ORDER BY id",
+            (paper_arxiv_id,)).fetchall()
+        return [self._row_to_node(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Ingestion

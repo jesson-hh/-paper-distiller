@@ -270,3 +270,22 @@ def test_migration_is_idempotent(tmp_path):
         "SELECT COUNT(*) FROM nodes WHERE kind='theorem'").fetchone()[0]
     assert theorem_nodes == 2  # not 4, not 6
     s.close()
+
+
+def test_add_and_get_node(tmp_path):
+    from paper_distiller.proofs.store import ProofStore, Node
+    store = ProofStore(tmp_path / "proofs.db")
+    nid = store.add_node(Node(
+        paper_arxiv_id="2110.1", kind="proof_step", text="By Hölder, A<=B.",
+        label="Step (a)", source_quote="By Hölder, A<=B.", loc='{"sec":"3.2"}',
+        techniques=["Hölder"], ord=1,
+    ))
+    assert isinstance(nid, int)
+    got = store.get_node(nid)
+    assert got.id == nid
+    assert got.kind == "proof_step"
+    assert got.techniques == ["Hölder"]
+    assert got.status == "extracted"
+    by_paper = store.nodes_by_paper("2110.1")
+    assert [n.id for n in by_paper] == [nid]
+    store.close()
