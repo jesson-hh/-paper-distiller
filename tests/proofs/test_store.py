@@ -336,3 +336,21 @@ def test_dependency_walk(tmp_path):
     store.add_edge(Edge(src_id=s1, dst_id=thm, rel="depends_on"))
     assert len(store.dependency_walk(thm)) <= 3
     store.close()
+
+
+def test_delete_paper_graph(tmp_path):
+    from paper_distiller.proofs.store import ProofStore, Node, Edge
+    store = ProofStore(tmp_path / "proofs.db")
+    a = store.add_node(Node(paper_arxiv_id="keep", kind="theorem", text="K"))
+    b = store.add_node(Node(paper_arxiv_id="drop", kind="theorem", text="D",
+                            techniques=["Hölder"]))
+    c = store.add_node(Node(paper_arxiv_id="drop", kind="proof_step", text="d-step"))
+    store.add_edge(Edge(src_id=b, dst_id=c, rel="depends_on"))
+    store.delete_paper_graph("drop")
+    assert [n.id for n in store.nodes_by_paper("drop")] == []
+    assert [n.id for n in store.nodes_by_paper("keep")] == [a]
+    # edges + node_techniques for the dropped paper are gone too
+    assert store._conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 0
+    assert store._conn.execute(
+        "SELECT COUNT(*) FROM node_techniques").fetchone()[0] == 0
+    store.close()

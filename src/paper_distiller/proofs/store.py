@@ -414,6 +414,23 @@ class ProofStore:
                     queue.append(e.dst_id)
         return [n for n in (self.get_node(i) for i in order) if n is not None]
 
+    def delete_paper_graph(self, paper_arxiv_id: str) -> None:
+        """Remove all graph nodes/edges/technique-links for one paper, so a
+        re-distill can cleanly rewrite them (paper-grained idempotency)."""
+        ids = [r["id"] for r in self._conn.execute(
+            "SELECT id FROM nodes WHERE paper_arxiv_id=?", (paper_arxiv_id,))]
+        if not ids:
+            return
+        placeholders = ",".join("?" * len(ids))
+        self._conn.execute(
+            f"DELETE FROM edges WHERE src_id IN ({placeholders}) "
+            f"OR dst_id IN ({placeholders})", (*ids, *ids))
+        self._conn.execute(
+            f"DELETE FROM node_techniques WHERE node_id IN ({placeholders})", ids)
+        self._conn.execute(
+            "DELETE FROM nodes WHERE paper_arxiv_id=?", (paper_arxiv_id,))
+        self._conn.commit()
+
     # ------------------------------------------------------------------
     # Ingestion
     # ------------------------------------------------------------------
