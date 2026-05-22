@@ -183,3 +183,90 @@ def test_techniques_first_seen_arxiv_id(tmp_path):
     holder = [t for t in techs if t.name == "Hölder"][0]
     assert holder.first_seen_arxiv_id == "2020.001"
     store.close()
+
+
+def test_graph_tables_exist_on_new_db(tmp_path):
+    from paper_distiller.proofs.store import ProofStore
+    store = ProofStore(tmp_path / "proofs.db")
+    tables = {row[0] for row in store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    assert {"nodes", "edges", "node_techniques"} <= tables
+    fts = {row[0] for row in store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='nodes_fts'"
+    )}
+    assert "nodes_fts" in fts
+    assert store._conn.execute(
+        "SELECT value FROM meta WHERE key='schema_version'"
+    ).fetchone()[0] == "2"
+    store.close()
+
+
+def test_migration_backfills_theorems_into_nodes(tmp_path):
+    """A v1-shaped DB (theorems but no theorem-nodes) gets theorem nodes on open."""
+    import sqlite3
+    db = tmp_path / "proofs.db"
+    conn = sqlite3.connect(str(db))
+    conn.executescript(
+        "CREATE TABLE theorems (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "paper_arxiv_id TEXT NOT NULL, paper_slug TEXT, name TEXT NOT NULL, "
+        "statement TEXT NOT NULL, proof_sketch TEXT, techniques_used TEXT NOT NULL, "
+        "created_at TEXT NOT NULL);"
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+    )
+    conn.execute(
+        "INSERT INTO theorems(paper_arxiv_id,paper_slug,name,statement,proof_sketch,"
+        "techniques_used,created_at) VALUES(?,?,?,?,?,?,?)",
+        ("2110.1", "slug-a", "Theorem 1", "X holds.", "sketch",
+         '["Bernstein"]', "2026-01-01T00:00:00"),
+    )
+    conn.execute("INSERT INTO meta(key,value) VALUES('schema_version','1')")
+    conn.commit()
+    conn.close()
+
+    from paper_distiller.proofs.store import ProofStore
+    store = ProofStore(db)  # opening runs the migration
+    rows = store._conn.execute(
+        "SELECT paper_arxiv_id, kind, label, text FROM nodes WHERE kind='theorem'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["paper_arxiv_id"] == "2110.1"
+    assert rows[0]["label"] == "Theorem 1"
+    techs = [r["technique"] for r in store._conn.execute(
+        "SELECT technique FROM node_techniques")]
+    assert techs == ["Bernstein"]
+    assert store._conn.execute(
+        "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "2"
+    store.close()
+
+
+def test_migration_is_idempotent(tmp_path):
+    """Re-opening a migrated DB must not double-create theorem nodes."""
+    import sqlite3
+    db = tmp_path / "proofs.db"
+    conn = sqlite3.connect(str(db))
+    conn.executescript(
+        "CREATE TABLE theorems (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "paper_arxiv_id TEXT NOT NULL, paper_slug TEXT, name TEXT NOT NULL, "
+        "statement TEXT NOT NULL, proof_sketch TEXT, techniques_used TEXT NOT NULL, "
+        "created_at TEXT NOT NULL);"
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+    )
+    for i in (1, 2):
+        conn.execute(
+            "INSERT INTO theorems(paper_arxiv_id,paper_slug,name,statement,"
+            "proof_sketch,techniques_used,created_at) VALUES(?,?,?,?,?,?,?)",
+            ("2110.1", "slug", f"Theorem {i}", "X.", "s", "[]",
+             "2026-01-01T00:00:00"),
+        )
+    conn.execute("INSERT INTO meta(key,value) VALUES('schema_version','1')")
+    conn.commit(); conn.close()
+
+    from paper_distiller.proofs.store import ProofStore
+    ProofStore(db).close()   # first open: migrates + backfills 2 theorem nodes
+    ProofStore(db).close()   # second open: version already 2 -> backfill skipped
+    s = ProofStore(db)       # third open
+    theorem_nodes = s._conn.execute(
+        "SELECT COUNT(*) FROM nodes WHERE kind='theorem'").fetchone()[0]
+    assert theorem_nodes == 2  # not 4, not 6
+    s.close()

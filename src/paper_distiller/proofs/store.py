@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 # Used by retrieve_by_text_match to filter noise tokens before FTS5 OR query
@@ -122,6 +122,59 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS nodes (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  paper_arxiv_id  TEXT NOT NULL,
+  paper_slug      TEXT,
+  kind            TEXT NOT NULL,
+  label           TEXT,
+  text            TEXT NOT NULL,
+  source_quote    TEXT,
+  loc             TEXT,
+  status          TEXT NOT NULL DEFAULT 'extracted',
+  confidence      REAL,
+  parent_id       INTEGER,
+  ord             INTEGER,
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_nodes_paper  ON nodes(paper_arxiv_id);
+CREATE INDEX IF NOT EXISTS idx_nodes_kind   ON nodes(kind);
+CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
+  label, text, source_quote,
+  content='nodes', content_rowid='id',
+  tokenize='porter unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER IF NOT EXISTS nodes_ai AFTER INSERT ON nodes BEGIN
+  INSERT INTO nodes_fts(rowid, label, text, source_quote)
+  VALUES (new.id, new.label, new.text, new.source_quote);
+END;
+CREATE TRIGGER IF NOT EXISTS nodes_ad AFTER DELETE ON nodes BEGIN
+  INSERT INTO nodes_fts(nodes_fts, rowid, label, text, source_quote)
+  VALUES('delete', old.id, old.label, old.text, old.source_quote);
+END;
+
+CREATE TABLE IF NOT EXISTS edges (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  src_id        INTEGER NOT NULL,
+  dst_id        INTEGER NOT NULL,
+  rel           TEXT NOT NULL,
+  justification TEXT,
+  cross_paper   INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,
+  UNIQUE(src_id, dst_id, rel)
+);
+CREATE INDEX IF NOT EXISTS idx_edges_src ON edges(src_id);
+CREATE INDEX IF NOT EXISTS idx_edges_dst ON edges(dst_id);
+CREATE INDEX IF NOT EXISTS idx_edges_rel ON edges(rel);
+
+CREATE TABLE IF NOT EXISTS node_techniques (
+  node_id   INTEGER NOT NULL,
+  technique TEXT NOT NULL,
+  PRIMARY KEY (node_id, technique)
+);
 """
 
 
@@ -139,11 +192,56 @@ class ProofStore:
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate()
+        self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Idempotent forward migration. v1 = theorems-only; v2 adds the graph
+        tables (created by _SCHEMA) and backfills theorem nodes."""
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key='schema_version'"
+        ).fetchone()
+        current = int(row[0]) if row else 0
+        if current < 2:
+            self._backfill_theorems_to_nodes()
         self._conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', ?)",
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
             (str(SCHEMA_VERSION),),
         )
-        self._conn.commit()
+
+    def _backfill_theorems_to_nodes(self) -> None:
+        """Copy existing `theorems` rows into `nodes` as kind='theorem'.
+        Guarded by (paper, label) so re-running never double-inserts."""
+        rows = self._conn.execute(
+            "SELECT paper_arxiv_id, paper_slug, name, statement, "
+            "techniques_used, created_at FROM theorems"
+        ).fetchall()
+        for r in rows:
+            exists = self._conn.execute(
+                "SELECT 1 FROM nodes WHERE paper_arxiv_id=? AND kind='theorem' "
+                "AND label IS ?",
+                (r["paper_arxiv_id"], r["name"]),
+            ).fetchone()
+            if exists:
+                continue
+            cur = self._conn.execute(
+                "INSERT INTO nodes(paper_arxiv_id, paper_slug, kind, label, text, "
+                "status, created_at) VALUES (?, ?, 'theorem', ?, ?, 'extracted', ?)",
+                (r["paper_arxiv_id"], r["paper_slug"], r["name"],
+                 r["statement"], r["created_at"]),
+            )
+            node_id = cur.lastrowid
+            try:
+                techs = json.loads(r["techniques_used"] or "[]")
+            except json.JSONDecodeError:
+                techs = []
+            for t in techs:
+                if isinstance(t, str) and t.strip():
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO node_techniques(node_id, technique) "
+                        "VALUES (?, ?)",
+                        (node_id, t.strip()),
+                    )
 
     def close(self) -> None:
         self._conn.close()
