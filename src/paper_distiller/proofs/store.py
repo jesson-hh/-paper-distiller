@@ -369,6 +369,34 @@ class ProofStore:
         return [self._row_to_edge(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # Graph search / lookup
+    # ------------------------------------------------------------------
+
+    def search_nodes(self, query: str, limit: int = 10) -> list[Node]:
+        """FTS5 search over node label + text + source_quote."""
+        if not query.strip():
+            return []
+        tokens = ['"' + tok.replace('"', '') + '"' for tok in query.split() if tok]
+        if not tokens:
+            return []
+        rows = self._conn.execute(
+            "SELECT n.* FROM nodes n JOIN nodes_fts ON nodes_fts.rowid = n.id "
+            "WHERE nodes_fts MATCH ? ORDER BY bm25(nodes_fts) LIMIT ?",
+            (" ".join(tokens), limit),
+        ).fetchall()
+        return [self._row_to_node(r) for r in rows]
+
+    def nodes_using_technique(self, technique: str, limit: int = 10) -> list[Node]:
+        if not technique.strip():
+            return []
+        rows = self._conn.execute(
+            "SELECT n.* FROM nodes n JOIN node_techniques nt ON nt.node_id = n.id "
+            "WHERE nt.technique = ? COLLATE NOCASE ORDER BY n.id DESC LIMIT ?",
+            (technique.strip(), limit),
+        ).fetchall()
+        return [self._row_to_node(r) for r in rows]
+
+    # ------------------------------------------------------------------
     # Ingestion
     # ------------------------------------------------------------------
 

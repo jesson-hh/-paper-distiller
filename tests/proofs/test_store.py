@@ -303,3 +303,19 @@ def test_add_edge_idempotent_and_query(tmp_path):
     assert out[0].dst_id == b and out[0].rel == "uses_assumption"
     assert [e.src_id for e in store.in_edges(b)] == [a]
     store.close()
+
+
+def test_search_nodes_and_by_technique(tmp_path):
+    from paper_distiller.proofs.store import ProofStore, Node
+    store = ProofStore(tmp_path / "proofs.db")
+    store.add_node(Node(paper_arxiv_id="p", kind="proof_step",
+                        text="Bound the empirical process via Dudley chaining.",
+                        techniques=["Dudley chaining"]))
+    store.add_node(Node(paper_arxiv_id="p", kind="proof_step",
+                        text="Apply Hölder inequality to split the product.",
+                        techniques=["Hölder"]))
+    hits = store.search_nodes("chaining")
+    assert len(hits) == 1 and "Dudley" in hits[0].text
+    by_tech = store.nodes_using_technique("Hölder")
+    assert len(by_tech) == 1 and "Hölder" in by_tech[0].text
+    store.close()
