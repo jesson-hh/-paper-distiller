@@ -23,6 +23,12 @@ class _FakeLLM:
     pass
 
 
+def _noop_link_paper(*args, **kwargs):
+    """Stub for link_paper that does nothing (no network, no store)."""
+    from paper_distiller.proofgraph.linker import LinkReport
+    return LinkReport()
+
+
 # ---------------------------------------------------------------------------
 # Tests for maybe_build_graph gating
 # ---------------------------------------------------------------------------
@@ -64,6 +70,9 @@ def test_maybe_build_graph_step_depth_calls_build(monkeypatch):
     monkeypatch.setattr(
         "paper_distiller.proofgraph.pipeline.build_graph_for_paper", _stub
     )
+    monkeypatch.setattr(
+        "paper_distiller.proofgraph.linker.link_paper", _noop_link_paper
+    )
 
     from paper_distiller.proofgraph.pipeline import maybe_build_graph
     store = _FakeProofStore()
@@ -95,6 +104,9 @@ def test_maybe_build_graph_theorem_depth_calls_build(monkeypatch):
 
     monkeypatch.setattr(
         "paper_distiller.proofgraph.pipeline.build_graph_for_paper", _stub
+    )
+    monkeypatch.setattr(
+        "paper_distiller.proofgraph.linker.link_paper", _noop_link_paper
     )
 
     from paper_distiller.proofgraph.pipeline import maybe_build_graph
@@ -170,3 +182,68 @@ def test_maybe_build_graph_swallows_exception(monkeypatch):
         llm=_FakeLLM(),
     )
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# New tests: link_paper wiring
+# ---------------------------------------------------------------------------
+
+def test_maybe_build_graph_calls_link_paper_once(monkeypatch):
+    """After a successful build, link_paper is called once with store + paper_arxiv_id + llm."""
+    monkeypatch.setenv("PD_GRAPH_DEPTH", "step")
+
+    expected_report = _fake_report(nodes_by_kind={"proof_step": 2})
+
+    def _build_stub(*args, **kwargs):
+        return expected_report
+
+    link_calls = []
+
+    def _link_stub(store, paper_arxiv_id, llm, **kwargs):
+        link_calls.append((store, paper_arxiv_id, llm))
+        from paper_distiller.proofgraph.linker import LinkReport
+        return LinkReport()
+
+    monkeypatch.setattr(
+        "paper_distiller.proofgraph.pipeline.build_graph_for_paper", _build_stub
+    )
+    monkeypatch.setattr(
+        "paper_distiller.proofgraph.linker.link_paper", _link_stub
+    )
+
+    from paper_distiller.proofgraph.pipeline import maybe_build_graph
+    store = _FakeProofStore()
+    llm = _FakeLLM()
+    result = maybe_build_graph(store, "9876.5432", "full text here", llm=llm)
+
+    assert result is expected_report
+    assert len(link_calls) == 1
+    called_store, called_id, called_llm = link_calls[0]
+    assert called_store is store
+    assert called_id == "9876.5432"
+    assert called_llm is llm
+
+
+def test_maybe_build_graph_link_paper_failure_still_returns_report(monkeypatch):
+    """If link_paper raises, maybe_build_graph still returns the CoverageReport (best-effort)."""
+    monkeypatch.setenv("PD_GRAPH_DEPTH", "step")
+
+    expected_report = _fake_report(nodes_by_kind={"theorem": 1})
+
+    def _build_stub(*args, **kwargs):
+        return expected_report
+
+    def _exploding_link(*args, **kwargs):
+        raise RuntimeError("linker kaboom")
+
+    monkeypatch.setattr(
+        "paper_distiller.proofgraph.pipeline.build_graph_for_paper", _build_stub
+    )
+    monkeypatch.setattr(
+        "paper_distiller.proofgraph.linker.link_paper", _exploding_link
+    )
+
+    from paper_distiller.proofgraph.pipeline import maybe_build_graph
+    result = maybe_build_graph(_FakeProofStore(), "1111.2222", "text", llm=_FakeLLM())
+
+    assert result is expected_report

@@ -170,11 +170,21 @@ def maybe_build_graph(
     if proof_store is None or depth not in _VALID_DEPTHS or not (full_text or "").strip():
         return None
     try:
-        return build_graph_for_paper(
+        report = build_graph_for_paper(
             proof_store, paper_arxiv_id, full_text,
             paper_slug=paper_slug, llm=llm, depth=depth,
         )
     except Exception:
         return None  # graph build is best-effort; never break the distill run
+
+    # Incremental cross-paper linking: plug the newly built paper into the
+    # vault graph.  Best-effort — a linker failure must never propagate.
+    try:
+        from .linker import link_paper  # lazy import avoids any potential cycle
+        link_paper(proof_store, paper_arxiv_id, llm)
+    except Exception:
+        pass  # linker failure is non-fatal
+
+    return report
 
 
