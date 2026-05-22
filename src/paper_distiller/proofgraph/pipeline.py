@@ -7,6 +7,10 @@ Public API:
   Segments the text, runs the per-segment extraction+gate+self_check loop,
   writes nodes to the store, resolves references into edges, marks dangling
   refs as gaps, and returns a coverage report.
+- ``maybe_build_graph(proof_store, paper_arxiv_id, full_text, *, paper_slug=None,
+                      llm=None) -> CoverageReport | None``
+  Gated by ``PD_GRAPH_DEPTH`` env-var (default off). Returns None when gating
+  is off or ``proof_store`` is None. Never raises.
 
 Design constraints (from spec §5):
 - Idempotent: calls ``store.delete_paper_graph`` first so re-runs are clean.
@@ -17,6 +21,7 @@ Design constraints (from spec §5):
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 
 from ..proofs.store import Edge, Node, ProofStore
@@ -144,5 +149,32 @@ def build_graph_for_paper(
         gaps=gaps,
         obligations=obligations,
     )
+
+
+_VALID_DEPTHS = {"theorem", "step"}
+
+
+def maybe_build_graph(
+    proof_store,
+    paper_arxiv_id: str,
+    full_text: str,
+    *,
+    paper_slug: str | None = None,
+    llm=None,
+) -> CoverageReport | None:
+    """Build the proof graph for a just-distilled paper IF PD_GRAPH_DEPTH is set
+    to 'theorem' or 'step' (default off). This is a SEPARATE LLM pass from the
+    article distillation (extra cost) — opt-in. Returns the CoverageReport or None.
+    Never raises: graph-build failures must not abort distillation."""
+    depth = os.getenv("PD_GRAPH_DEPTH", "off").strip().lower()
+    if proof_store is None or depth not in _VALID_DEPTHS or not (full_text or "").strip():
+        return None
+    try:
+        return build_graph_for_paper(
+            proof_store, paper_arxiv_id, full_text,
+            paper_slug=paper_slug, llm=llm, depth=depth,
+        )
+    except Exception:
+        return None  # graph build is best-effort; never break the distill run
 
 
