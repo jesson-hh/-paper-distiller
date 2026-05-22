@@ -20,6 +20,7 @@ from pathlib import Path
 from ..distill.article import distill as distill_article
 from ..llm.openai_compatible import LLMError
 from ..pipeline import fetch_with_fallback
+from ..proofgraph.pipeline import maybe_build_graph
 from ..proofs.store import open_for_vault
 from ..vault.crosslink import load_index
 from .base import Agent, Context
@@ -290,6 +291,16 @@ class _DistillOne:
                     )
             except Exception:
                 pass  # never let proof-store errors abort distillation
+
+        if self._proof_store is not None:
+            try:
+                await asyncio.to_thread(
+                    maybe_build_graph,
+                    self._proof_store, self._paper.arxiv_id or "", full_text,
+                    paper_slug=getattr(article, "slug", None), llm=ctx.llm,
+                )
+            except Exception:
+                pass  # never let graph build abort distillation
         return {}
 
 
