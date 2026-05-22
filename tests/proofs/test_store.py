@@ -356,6 +356,21 @@ def test_delete_paper_graph(tmp_path):
     store.close()
 
 
+def test_set_node_status(tmp_path):
+    """set_node_status updates an existing node's status; get_node reflects it."""
+    from paper_distiller.proofs.store import ProofStore, Node
+    store = ProofStore(tmp_path / "proofs.db")
+    nid = store.add_node(Node(
+        paper_arxiv_id="p", kind="proof_step", text="A step.",
+    ))
+    assert store.get_node(nid).status == "extracted"
+    store.set_node_status(nid, "gap")
+    assert store.get_node(nid).status == "gap"
+    store.set_node_status(nid, "suspicious")
+    assert store.get_node(nid).status == "suspicious"
+    store.close()
+
+
 def test_theorem_layer_unchanged_after_graph_migration(tmp_path):
     """Existing theorem ingestion + queries still work identically with v2 schema."""
     from paper_distiller.proofs.store import ProofStore

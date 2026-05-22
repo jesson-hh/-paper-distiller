@@ -414,6 +414,12 @@ class ProofStore:
                     queue.append(e.dst_id)
         return [n for n in (self.get_node(i) for i in order) if n is not None]
 
+    def set_node_status(self, node_id: int, status: str) -> None:
+        """Update the status column for a single node."""
+        self._conn.execute(
+            "UPDATE nodes SET status=? WHERE id=?", (status, node_id))
+        self._conn.commit()
+
     def delete_paper_graph(self, paper_arxiv_id: str) -> None:
         """Remove all graph nodes/edges/technique-links for one paper, so a
         re-distill can cleanly rewrite them (paper-grained idempotency)."""
