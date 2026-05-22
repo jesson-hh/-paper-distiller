@@ -38,14 +38,16 @@ from typing import NamedTuple
 FIXTURE = [
     {
         "label": "Theorem 1.1",
+        "kind": "theorem",
         "statement": "For all x in [0,1], E[X] <= C * sqrt(n).",
         "source_quote": "For all x in [0,1], E[X] <= C * sqrt(n).",
         "techniques": ["Bernstein", "concentration"],
         "gold_label": "ok",
-        "note": "Standard, well-grounded theorem statement.",
+        "note": "Standard, well-grounded theorem statement (a premise, not a derived step).",
     },
     {
         "label": "Step (b)",
+        "kind": "proof_step",
         "statement": "Applying Hölder's inequality, we get ||fg||_1 <= ||f||_2 * ||g||_2.",
         "source_quote": "Applying Hölder's inequality, we get ||fg||_1 <= ||f||_2 * ||g||_2.",
         "techniques": ["Hölder"],
@@ -54,6 +56,7 @@ FIXTURE = [
     },
     {
         "label": "Claim 3.2",
+        "kind": "claim",
         "statement": "The sum converges absolutely for all real x.",
         "source_quote": "The sum converges for all real x.",
         "techniques": [],
@@ -62,14 +65,16 @@ FIXTURE = [
     },
     {
         "label": "Lemma 4.1",
+        "kind": "proof_step",
         "statement": "By Theorem 4.3 (proved below), the error is O(1/n).",
         "source_quote": "By Theorem 4.3 (proved below), the error is O(1/n).",
         "techniques": [],
         "gold_label": "problem",
-        "note": "Forward reference to Theorem 4.3 which has not yet been proved — gap.",
+        "note": "Proof step forward-referencing Theorem 4.3 (not yet proved) — gap.",
     },
     {
         "label": "Corollary 2.1",
+        "kind": "proof_step",
         "statement": "The bound follows by combining the previous three lemmas.",
         "source_quote": "The bound follows by combining the previous three lemmas.",
         "techniques": [],
@@ -172,7 +177,7 @@ def run_eval() -> None:
     for item in FIXTURE:
         nid = store.add_node(Node(
             paper_arxiv_id="eval-fixture",
-            kind="proof_step",
+            kind=item.get("kind", "proof_step"),
             text=item["statement"],
             label=item["label"],
             source_quote=item["source_quote"],
