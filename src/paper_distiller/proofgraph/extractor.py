@@ -19,7 +19,6 @@ from .extraction_schema import ExtractedNode, parse_extraction
 from .reader import Segment, verify_quote
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "extract.md"
-_SELF_CHECK_PROMPT_PATH = Path(__file__).parent / "prompts" / "self_check.md"
 
 # Grounding gate threshold: same as verify_quote default
 _GATE_THRESHOLD = 0.85
@@ -76,8 +75,13 @@ def extract_segment(
     memory,  # RunningMemory
     llm,     # LLMClient or compatible stub with .complete()
     depth: str = "step",
-) -> list[ExtractedNode]:
+) -> tuple[list[ExtractedNode], int]:
     """Extract nodes from *segment* using the LLM, enforcing the grounding gate.
+
+    Returns a tuple ``(accepted, n_rejected)`` where:
+    - ``accepted`` is the list of grounded nodes.
+    - ``n_rejected`` is the count of nodes dropped because their
+      ``source_quote`` failed ``verify_quote`` after the one retry.
 
     Algorithm:
     1. Build prompt from ``prompts/extract.md`` + memory + segment.
@@ -86,8 +90,8 @@ def extract_segment(
     4. Run grounding gate on every node (``verify_quote``).
     5. For nodes that fail the gate: retry the LLM **once** with a correction
        prompt for those specific failed quotes.
-    6. Re-run the gate on the retry results; still-failing nodes are dropped.
-    7. Return the accepted (grounded) nodes.
+    6. Re-run the gate on the retry results; still-failing nodes are dropped
+       and counted in ``n_rejected``.
     """
     # Step 1-2: initial extraction call
     prompt = _build_extract_prompt(segment, memory, depth)
@@ -95,26 +99,18 @@ def extract_segment(
     try:
         raw = llm.complete(messages, temperature=0.2, response_format="json")
     except Exception:
-        return []
+        return [], 0
 
     # Step 3: parse
     nodes = parse_extraction(raw)
     if not nodes:
-        # Still need to do retry to match call_count=2 expectation when we have failed nodes
-        # But here nodes is empty — check if raw was parseable garbage
-        # Re-check: if parse produced nothing, do a single retry for consistency
-        # Actually per spec: retry only on gate failure, not parse failure
-        # For empty parse result from garbage: call_count=1 is correct
-        # But our test expects call_count=2 for fabricated quote case
-        # That means: the test sends fabricated quote nodes which DO parse
-        # For truly empty parse (garbage), call_count=1 is fine
-        return []
+        return [], 0
 
     # Step 4: gate
     accepted, failed = _run_gate(nodes, segment.text)
 
     if not failed:
-        return accepted
+        return accepted, 0
 
     # Step 5: retry once for failed nodes
     failed_quotes = [n.source_quote for n in failed]
@@ -123,12 +119,14 @@ def extract_segment(
     try:
         retry_raw = llm.complete(retry_messages, temperature=0.2, response_format="json")
     except Exception:
-        # Drop the failed nodes entirely on LLM error
-        return accepted
+        # Drop the failed nodes entirely on LLM error — all originally-failed
+        return accepted, len(failed)
 
     retry_nodes = parse_extraction(retry_raw)
+    n_still_failed = len(failed)  # start assuming all failed still fail
     if retry_nodes:
-        retry_accepted, _ = _run_gate(retry_nodes, segment.text)
+        retry_accepted, retry_failed = _run_gate(retry_nodes, segment.text)
+        n_still_failed = len(retry_failed)
         # Only add retry nodes whose source_quote is not already in accepted
         existing_quotes = {n.source_quote for n in accepted}
         for rn in retry_accepted:
@@ -136,7 +134,7 @@ def extract_segment(
                 accepted.append(rn)
                 existing_quotes.add(rn.source_quote)
 
-    return accepted
+    return accepted, n_still_failed
 
 
 # ---------------------------------------------------------------------------
@@ -176,9 +174,15 @@ def self_check(
     if not nodes:
         return nodes
 
-    nodes_summary = [
-        {"label": n.label or f"(unlabelled-{i})", "text": n.text}
+    # Build a stable key for each node: label if present, else "(node-{i})"
+    idx_to_node = {
+        (n.label if n.label else f"(node-{i})"): n
         for i, n in enumerate(nodes)
+    }
+
+    nodes_summary = [
+        {"label": key, "text": n.text}
+        for key, n in idx_to_node.items()
     ]
     prompt = _SELF_CHECK_TEMPLATE.format(
         segment_text=segment.text,
@@ -203,8 +207,8 @@ def self_check(
         return nodes
 
     label_set = {str(lbl) for lbl in suspicious_labels if lbl}
-    for node in nodes:
-        if node.label and node.label in label_set:
+    for key, node in idx_to_node.items():
+        if key in label_set:
             node.status = "suspicious"
 
     return nodes

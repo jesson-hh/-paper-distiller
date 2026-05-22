@@ -75,14 +75,9 @@ def build_graph_for_paper(
     segments_processed = 0
 
     for seg in segs:
-        # For depth=="theorem" on proof blocks, skip detailed step extraction
-        # but still extract statement-level nodes if any
-        effective_depth = depth
-        if depth == "theorem" and seg.is_proof_block:
-            effective_depth = "theorem"  # no proof_step decomposition
-
         # Extract nodes (grounding gate enforced inside extract_segment)
-        accepted = extract_segment(seg, memory, llm, depth=effective_depth)
+        accepted, n_rejected = extract_segment(seg, memory, llm, depth=depth)
+        rejected_quotes += n_rejected
         accepted = self_check(seg, accepted, llm)
 
         # Write each accepted node to the store
@@ -118,6 +113,7 @@ def build_graph_for_paper(
 
     # Step 4: resolve edges
     gaps = 0
+    gap_node_ids: set[int] = set()
     obligations: list[str] = []
 
     for nid, refs in pending:
@@ -131,9 +127,11 @@ def build_graph_for_paper(
                 except Exception:
                     pass  # UNIQUE constraint if duplicate — safe to ignore
             else:
-                # Unresolvable → mark as gap
-                _set_node_status(store, nid, "gap")
-                gaps += 1
+                # Unresolvable → mark as gap (once per node)
+                if nid not in gap_node_ids:
+                    store.set_node_status(nid, "gap")
+                    gap_node_ids.add(nid)
+                    gaps += 1
                 if ref.target not in obligations:
                     obligations.append(ref.target)
 
@@ -148,9 +146,3 @@ def build_graph_for_paper(
     )
 
 
-def _set_node_status(store: ProofStore, node_id: int, status: str) -> None:
-    """Update a node's status in the store (used for gap marking)."""
-    store._conn.execute(
-        "UPDATE nodes SET status=? WHERE id=?", (status, node_id)
-    )
-    store._conn.commit()

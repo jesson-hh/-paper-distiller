@@ -77,13 +77,16 @@ class _TwoNodeLLM:
         ]})
 
 
+FABRICATED_QUOTE2 = "The proof uses Gaussian tail estimates and union bounds."
+
+
 def test_extract_segment_keeps_grounded_drops_fabricated():
     """The grounding gate must admit the node with the verbatim quote and
     reject (or mark unsupported) the node with a fabricated quote."""
     from paper_distiller.proofgraph.extractor import extract_segment
     seg = _make_segment()
     llm = _TwoNodeLLM()
-    accepted = extract_segment(seg, _memory(), llm)
+    accepted, n_rejected = extract_segment(seg, _memory(), llm)
     # Only the grounded node should be returned
     assert len(accepted) == 1
     assert accepted[0].source_quote == GROUNDED_QUOTE
@@ -95,7 +98,7 @@ def test_extract_segment_fabricated_node_not_in_accepted():
     from paper_distiller.proofgraph.extractor import extract_segment
     seg = _make_segment()
     llm = _TwoNodeLLM()
-    accepted = extract_segment(seg, _memory(), llm)
+    accepted, _ = extract_segment(seg, _memory(), llm)
     quotes = [n.source_quote for n in accepted]
     assert FABRICATED_QUOTE not in quotes
 
@@ -112,8 +115,9 @@ def test_extract_segment_retries_on_failed_gate():
         "source_quote": FABRICATED_QUOTE,
     }]}))
     seg = _make_segment()
-    accepted = extract_segment(seg, _memory(), llm)
+    accepted, n_rejected = extract_segment(seg, _memory(), llm)
     assert accepted == []
+    assert n_rejected == 1
     # Should have made 2 calls: initial + one retry
     assert llm.call_count == 2
 
@@ -129,8 +133,9 @@ def test_extract_segment_all_grounded_all_accepted():
         {"kind": "proof_step", "text": "step2", "source_quote": q2},
     ]}))
     seg = _make_segment()
-    accepted = extract_segment(seg, _memory(), llm)
+    accepted, n_rejected = extract_segment(seg, _memory(), llm)
     assert len(accepted) == 2
+    assert n_rejected == 0
 
 
 def test_extract_segment_empty_llm_response_returns_empty():
@@ -138,8 +143,9 @@ def test_extract_segment_empty_llm_response_returns_empty():
     from paper_distiller.proofgraph.extractor import extract_segment
     llm = _SingleCallLLM("garbage not json")
     seg = _make_segment()
-    accepted = extract_segment(seg, _memory(), llm)
+    accepted, n_rejected = extract_segment(seg, _memory(), llm)
     assert accepted == []
+    assert n_rejected == 0
 
 
 def test_extract_segment_returns_extracted_node_objects():
@@ -153,11 +159,46 @@ def test_extract_segment_returns_extracted_node_objects():
         "techniques": ["Bernstein"],
     }]}))
     seg = _make_segment()
-    accepted = extract_segment(seg, _memory(), llm)
+    accepted, n_rejected = extract_segment(seg, _memory(), llm)
     assert len(accepted) == 1
+    assert n_rejected == 0
     assert isinstance(accepted[0], ExtractedNode)
     assert accepted[0].status == "extracted"
     assert "Bernstein" in accepted[0].techniques
+
+
+def test_extract_segment_returns_tuple_n_rejected():
+    """1 grounded + 2 fabricated nodes → returns (1 accepted, n_rejected=2)."""
+    from paper_distiller.proofgraph.extractor import extract_segment
+
+    # LLM always returns same 3 nodes: 1 real quote, 2 fabricated
+    canned = json.dumps({"nodes": [
+        {
+            "kind": "proof_step",
+            "text": "Bernstein tail bound",
+            "source_quote": GROUNDED_QUOTE,
+            "techniques": ["Bernstein"],
+            "refs": [],
+        },
+        {
+            "kind": "proof_step",
+            "text": "Fake node 1",
+            "source_quote": FABRICATED_QUOTE,
+            "refs": [],
+        },
+        {
+            "kind": "proof_step",
+            "text": "Fake node 2",
+            "source_quote": FABRICATED_QUOTE2,
+            "refs": [],
+        },
+    ]})
+    llm = _SingleCallLLM(canned)
+    seg = _make_segment()
+    accepted, n_rejected = extract_segment(seg, _memory(), llm)
+    assert len(accepted) == 1
+    assert accepted[0].source_quote == GROUNDED_QUOTE
+    assert n_rejected == 2
 
 
 # ---------------------------------------------------------------------------
@@ -231,3 +272,35 @@ def test_self_check_garbled_verdict_no_crash():
     # No crash, nodes unchanged
     assert len(result) == 2
     assert all(n.status == "extracted" for n in result)
+
+
+class _UnlabelledSuspiciousLLM:
+    """Returns a self-check verdict flagging '(node-1)' (the second node, index 1)."""
+    def __init__(self):
+        self.call_count = 0
+
+    def complete(self, messages, temperature=0.2, response_format=None):
+        self.call_count += 1
+        return json.dumps({"suspicious_labels": ["(node-1)"]})
+
+
+def test_self_check_flags_unlabelled_node_by_index_key():
+    """An unlabelled proof_step node must be flagged 'suspicious' when the mock
+    LLM returns its '(node-i)' key."""
+    from paper_distiller.proofgraph.extractor import self_check
+    from paper_distiller.proofgraph.extraction_schema import ExtractedNode
+
+    seg = _make_segment()
+    nodes = [
+        ExtractedNode(kind="proof_step", text="step0",
+                      source_quote="By Bernstein's inequality we bound the tail probability."),
+        # label=None — index 1
+        ExtractedNode(kind="proof_step", text="step1",
+                      source_quote="Applying Dudley chaining to the empirical process yields the claim."),
+    ]
+    llm = _UnlabelledSuspiciousLLM()
+    result = self_check(seg, nodes, llm)
+    assert result[1].status == "suspicious", (
+        f"Expected node-1 to be suspicious; got {result[1].status}"
+    )
+    assert result[0].status != "suspicious"

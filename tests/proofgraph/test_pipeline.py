@@ -2,6 +2,10 @@
 from __future__ import annotations
 import json
 
+# Fabricated (non-verbatim) quotes for rejection tests
+FABRICATED_QUOTE_A = "The proof uses Gaussian tail estimates and union bounds."
+FABRICATED_QUOTE_B = "By the Central Limit Theorem we conclude normality."
+
 
 # ---------------------------------------------------------------------------
 # A tiny fake paper whose text contains a theorem statement and a proof.
@@ -185,3 +189,117 @@ def test_build_graph_returns_coverage_report_fields(tmp_path):
     assert isinstance(report.rejected_quotes, int)
     assert isinstance(report.gaps, int)
     assert isinstance(report.obligations, list)
+
+
+class _RejectingLLM:
+    """LLM that returns one grounded node + two fabricated nodes on extraction,
+    and no-suspicious on self-check.  On retry it returns the same fabricated
+    nodes (so they stay rejected)."""
+
+    def __init__(self):
+        self.call_count = 0
+        # A text fragment that is verbatim in FAKE_PAPER (theorem segment)
+        self._grounded = THEOREM_QUOTE
+        self._resp = json.dumps({"nodes": [
+            {
+                "kind": "theorem",
+                "label": "Theorem 1",
+                "text": "For all x, f(x) <= C.",
+                "source_quote": THEOREM_QUOTE,
+                "techniques": [],
+                "refs": [],
+            },
+            {
+                "kind": "proof_step",
+                "text": "Fake step A",
+                "source_quote": FABRICATED_QUOTE_A,
+                "refs": [],
+            },
+            {
+                "kind": "proof_step",
+                "text": "Fake step B",
+                "source_quote": FABRICATED_QUOTE_B,
+                "refs": [],
+            },
+        ]})
+        self._no_suspicious = json.dumps({"suspicious_labels": []})
+        self._empty = json.dumps({"nodes": []})
+
+    def complete(self, messages, temperature=0.2, response_format=None):
+        self.call_count += 1
+        content = messages[0]["content"] if messages else ""
+        if content.startswith("You are reviewing extracted mathematical"):
+            return self._no_suspicious
+        if THEOREM_QUOTE in content and "Kind hint: theorem" in content:
+            return self._resp
+        return self._empty
+
+
+def test_build_graph_rejected_quotes_counts_dropped_nodes(tmp_path):
+    """report.rejected_quotes must reflect nodes dropped by the grounding gate."""
+    from paper_distiller.proofs.store import ProofStore
+    from paper_distiller.proofgraph.pipeline import build_graph_for_paper
+    store = ProofStore(tmp_path / "proofs.db")
+    llm = _RejectingLLM()
+    report = build_graph_for_paper(store, "1234.5678", FAKE_PAPER, paper_slug="fp", llm=llm)
+    # The theorem segment produces 1 accepted + 2 rejected
+    assert report.rejected_quotes == 2
+
+
+class _TwoDanglingRefsLLM:
+    """LLM that returns one proof_step node with TWO dangling refs and no-suspicious
+    on self-check.  The theorem segment returns a named theorem so label_to_id is
+    populated for one label; the two refs point at labels that don't exist."""
+
+    # A text verbatim in FAKE_PAPER proof segment
+    STEP_QUOTE = "By Bernstein's inequality we bound the tail probability directly."
+
+    def __init__(self):
+        self.call_count = 0
+        self._theorem_resp = json.dumps({"nodes": [{
+            "kind": "theorem",
+            "label": "Theorem 1",
+            "text": "For all x, f(x) <= C.",
+            "source_quote": THEOREM_QUOTE,
+            "refs": [],
+        }]})
+        self._proof_resp = json.dumps({"nodes": [{
+            "kind": "proof_step",
+            "label": "Step 1",
+            "text": "Bernstein tail bound",
+            "source_quote": self.STEP_QUOTE,
+            "techniques": [],
+            "refs": [
+                {"rel": "depends_on", "target": "Lemma 99"},
+                {"rel": "depends_on", "target": "Lemma 100"},
+            ],
+        }]})
+        self._no_suspicious = json.dumps({"suspicious_labels": []})
+        self._empty = json.dumps({"nodes": []})
+
+    def complete(self, messages, temperature=0.2, response_format=None):
+        self.call_count += 1
+        content = messages[0]["content"] if messages else ""
+        if content.startswith("You are reviewing extracted mathematical"):
+            return self._no_suspicious
+        if self.STEP_QUOTE in content:
+            return self._proof_resp
+        if THEOREM_QUOTE in content and "Kind hint: theorem" in content:
+            return self._theorem_resp
+        return self._empty
+
+
+def test_build_graph_two_dangling_refs_count_one_gap(tmp_path):
+    """A node with two dangling refs must increment report.gaps only once,
+    and its status must be 'gap'."""
+    from paper_distiller.proofs.store import ProofStore
+    from paper_distiller.proofgraph.pipeline import build_graph_for_paper
+    store = ProofStore(tmp_path / "proofs.db")
+    llm = _TwoDanglingRefsLLM()
+    report = build_graph_for_paper(store, "1234.5678", FAKE_PAPER, paper_slug="fp", llm=llm)
+
+    nodes = store.nodes_by_paper("1234.5678")
+    step = next((n for n in nodes if n.label == "Step 1"), None)
+    assert step is not None, f"Step 1 not found; labels={[n.label for n in nodes]}"
+    assert step.status == "gap", f"Expected 'gap' but got '{step.status}'"
+    assert report.gaps == 1, f"Expected gaps=1 but got {report.gaps}"
