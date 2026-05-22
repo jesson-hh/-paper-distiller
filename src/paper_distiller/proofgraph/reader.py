@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 
 
 @dataclass
@@ -96,3 +97,48 @@ def segment(text: str) -> list[Segment]:
         cur.append(i)
     _flush()
     return segments
+
+
+@dataclass
+class GateResult:
+    ok: bool
+    score: float            # 1.0 = exact (after whitespace norm); else best fuzzy ratio
+    matched_span: str | None  # the source substring that best matches, if any
+
+
+def _norm_ws(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def verify_quote(
+    quote: str, segment_text: str, threshold: float = 0.85,
+) -> GateResult:
+    """The grounding gate. Returns ok=True iff `quote` is found in
+    `segment_text` exactly (after whitespace normalization) or with a best
+    fuzzy ratio >= threshold over a sliding window. Fabricated quotes that
+    aren't really in the source score low and are rejected — this is what
+    structurally keeps hallucinated nodes out of the graph.
+    """
+    q = _norm_ws(quote)
+    if not q:
+        return GateResult(ok=False, score=0.0, matched_span=None)
+    hay = _norm_ws(segment_text)
+    if q in hay:
+        return GateResult(ok=True, score=1.0, matched_span=q)
+    # Fuzzy: slide a window the length of the quote across the haystack.
+    words = hay.split(" ")
+    qlen = len(q)
+    best = 0.0
+    best_span: str | None = None
+    # Build candidate windows by character length around the quote length.
+    for i in range(len(words)):
+        window = ""
+        j = i
+        while j < len(words) and len(window) < qlen + 20:
+            window = (window + " " + words[j]).strip()
+            j += 1
+            ratio = SequenceMatcher(None, q, window).ratio()
+            if ratio > best:
+                best, best_span = ratio, window
+    return GateResult(ok=best >= threshold, score=round(best, 3),
+                      matched_span=best_span if best >= threshold else None)
