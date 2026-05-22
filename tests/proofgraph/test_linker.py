@@ -185,3 +185,70 @@ class TestClassifyPair:
             m.get("content", "") for m in llm.calls[0] if isinstance(m, dict)
         )
         assert node_a.text in all_text or node_b.text in all_text
+
+
+# ---------------------------------------------------------------------------
+# Task 5.3 — link_paper
+# ---------------------------------------------------------------------------
+
+class TestLinkPaper:
+    def test_writes_cross_paper_edge(self, tmp_path):
+        from paper_distiller.proofgraph.linker import link_paper
+
+        store, node_a, node_b, node_c = _seed_store(tmp_path)
+        # LLM always returns same_as for the A↔B candidate pair
+        llm = _StubLLM(['{"rel":"same_as","justification":"same Bernstein bound"}'] * 10)
+        report = link_paper(store, "A", llm, k=6)
+
+        edges = store.out_edges(node_a.id)
+        cross_edges = [e for e in edges if e.cross_paper == 1 and e.rel == "same_as"]
+        assert len(cross_edges) >= 1, "At least one cross-paper same_as edge expected"
+
+    def test_report_edges_created(self, tmp_path):
+        from paper_distiller.proofgraph.linker import link_paper
+
+        store, node_a, node_b, node_c = _seed_store(tmp_path)
+        llm = _StubLLM(['{"rel":"same_as","justification":"same Bernstein bound"}'] * 10)
+        report = link_paper(store, "A", llm, k=6)
+
+        assert report.edges_created >= 1
+        assert report.by_rel.get("same_as", 0) >= 1
+
+    def test_report_pairs_considered(self, tmp_path):
+        from paper_distiller.proofgraph.linker import link_paper
+
+        store, node_a, node_b, node_c = _seed_store(tmp_path)
+        llm = _StubLLM(['{"rel":"same_as","justification":"same Bernstein bound"}'] * 10)
+        report = link_paper(store, "A", llm, k=6)
+
+        assert report.pairs_considered >= 1
+
+    def test_idempotent_no_duplicate_edges(self, tmp_path):
+        from paper_distiller.proofgraph.linker import link_paper
+
+        store, node_a, node_b, node_c = _seed_store(tmp_path)
+        llm = _StubLLM(['{"rel":"same_as","justification":"same Bernstein bound"}'] * 20)
+        link_paper(store, "A", llm, k=6)
+        link_paper(store, "A", llm, k=6)
+
+        edges = store.out_edges(node_a.id)
+        same_as_edges = [e for e in edges if e.rel == "same_as" and e.dst_id == node_b.id]
+        assert len(same_as_edges) == 1, "Re-running must not duplicate edges"
+
+    def test_none_classified_not_written(self, tmp_path):
+        from paper_distiller.proofgraph.linker import link_paper
+
+        store, node_a, node_b, node_c = _seed_store(tmp_path)
+        llm = _StubLLM(['{"rel":"none","justification":"unrelated"}'] * 10)
+        report = link_paper(store, "A", llm, k=6)
+
+        assert report.edges_created == 0
+        assert store.out_edges(node_a.id) == []
+
+    def test_link_report_dataclass(self, tmp_path):
+        from paper_distiller.proofgraph.linker import LinkReport
+
+        r = LinkReport(pairs_considered=3, edges_created=1, by_rel={"same_as": 1})
+        assert r.pairs_considered == 3
+        assert r.edges_created == 1
+        assert r.by_rel["same_as"] == 1

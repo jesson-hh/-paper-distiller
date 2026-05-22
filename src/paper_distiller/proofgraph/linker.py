@@ -8,7 +8,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from paper_distiller.proofs.store import Node, ProofStore
+from dataclasses import dataclass, field
+
+from paper_distiller.proofs.store import Edge, Node, ProofStore
 
 
 # ---------------------------------------------------------------------------
@@ -116,3 +118,53 @@ def classify_pair(
         return (None, justification)
 
     return (rel, justification)
+
+
+# ---------------------------------------------------------------------------
+# Task 5.3 — LinkReport + link_paper (orchestrate + write cross-paper edges)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LinkReport:
+    """Summary produced by link_paper."""
+
+    pairs_considered: int = 0
+    edges_created: int = 0
+    by_rel: dict[str, int] = field(default_factory=dict)
+
+
+def link_paper(
+    store: ProofStore,
+    paper_arxiv_id: str,
+    llm,
+    *,
+    k: int = 6,
+) -> LinkReport:
+    """For every node in *paper_arxiv_id*, find cross-paper candidates and
+    classify each pair, writing ``cross_paper=1`` edges for confirmed relations.
+
+    Idempotent: ``store.add_edge`` uses ``INSERT OR IGNORE`` on
+    ``UNIQUE(src_id, dst_id, rel)`` so re-running never duplicates edges.
+
+    Returns a :class:`LinkReport` summarising activity.
+    """
+    report = LinkReport()
+
+    for node in store.nodes_by_paper(paper_arxiv_id):
+        candidates = find_candidates(store, node, k=k)
+        for cand in candidates:
+            rel, justification = classify_pair(node, cand, llm)
+            report.pairs_considered += 1
+            if rel is not None:
+                store.add_edge(Edge(
+                    src_id=node.id,
+                    dst_id=cand.id,
+                    rel=rel,
+                    justification=justification,
+                    cross_paper=1,
+                ))
+                report.edges_created += 1
+                report.by_rel[rel] = report.by_rel.get(rel, 0) + 1
+
+    return report
