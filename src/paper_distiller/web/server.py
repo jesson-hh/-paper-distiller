@@ -55,6 +55,7 @@ def create_app(vault_path: str) -> FastAPI:
     from .routes.vault import router as vault_router          # noqa: PLC0415
     from .routes.chat import router as chat_router            # noqa: PLC0415
     from .routes.health import router as health_router        # noqa: PLC0415
+    from .routes.paper import router as paper_router          # noqa: PLC0415
 
     # Store vault_path in app state so routes can access it
     app.state.vault_path = vault_path
@@ -63,6 +64,7 @@ def create_app(vault_path: str) -> FastAPI:
     app.include_router(vault_router)
     app.include_router(chat_router)
     app.include_router(health_router)
+    app.include_router(paper_router)
 
     # ------------------------------------------------------------------ #
     # Static files + HTML root                                             #
