@@ -864,7 +864,9 @@ function App() {
   }, [messages]);
 
   const addMsg = (m) => setMessages(prev => [...prev, { ...m, id: m.id || uid() }]);
-  const updateMsg = (id, patch) => setMessages(prev => prev.map(m => m.id === id ? { ...m, ...patch } : m));
+  const updateMsg = (id, patch) => setMessages(prev =>
+    prev.map(m => m.id === id ? { ...m, ...(typeof patch === "function" ? patch(m) : patch) } : m)
+  );
 
   const openArticle = (slug, cat = "articles", arxivId = null) => {
     setCurrentSlug(slug);
@@ -956,7 +958,7 @@ function App() {
           }
 
           case "cost":
-            setCost(event.cny || 0);
+            setCost(prev => prev + (event.cny || 0));
             break;
 
           case "done":
@@ -972,7 +974,7 @@ function App() {
             break;
 
           case "error":
-            updateMsg(asstId, { text: (prev => (prev.text ? prev.text + "\n" : "") + `错误: ${event.message}`), streaming: false });
+            updateMsg(asstId, prev => ({ text: (prev.text ? prev.text + "\n" : "") + `错误: ${event.message}`, streaming: false }));
             break;
 
           default:
