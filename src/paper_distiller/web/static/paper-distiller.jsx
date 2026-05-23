@@ -326,7 +326,13 @@ function WelcomeView({ onPick, onOpenArticle }) {
 // ───────────────────────────────────────────────────────────
 // WORKSPACE — article view (wired to /vault/article/{category}/{slug})
 
-function ArticleView({ slug, category, articleFlash, onOpenGraph, onOpenPaper }) {
+// Scan text for the first "p. N" reference and return the page number or null.
+function _findPageRef(text) {
+  const m = /p\.\s*(\d+)/.exec(text);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+function ArticleView({ slug, category, articleFlash, onOpenGraph, onOpenPaper, jumpToPaperPage }) {
   const [article, setArticle] = useState(null);
   const [error, setError] = useState(null);
 
@@ -374,15 +380,49 @@ function ArticleView({ slug, category, articleFlash, onOpenGraph, onOpenPaper })
         {tags.map(t => <span key={t} className="tag">{t}</span>)}
       </div>
 
-      {sections.map((sec, i) => (
-        <div key={i} data-section={sec.heading} className={"article-section" + (articleFlash === sec.heading ? " sec-flash" : "")}>
-          {sec.heading && <h3><span>{sec.heading}</span></h3>}
-          {sec.paras.map((p, j) => {
-            if (p.type === "h3") return <h4 key={j}>{p.text}</h4>;
-            return <p key={j}><RichText>{p.text}</RichText></p>;
-          })}
-        </div>
-      ))}
+      {sections.map((sec, i) => {
+        // Find first p. N ref in any paragraph of this section (heuristic for jump pill)
+        const pageRef = sec.paras.reduce((found, p) => {
+          if (found !== null) return found;
+          return _findPageRef(p.text);
+        }, null);
+
+        return (
+          <div key={i} data-section={sec.heading} className={"article-section" + (articleFlash === sec.heading ? " sec-flash" : "")}>
+            {sec.heading && (
+              <h3>
+                <span>{sec.heading}</span>
+                {pageRef !== null && jumpToPaperPage && (
+                  <button
+                    className="page-pill"
+                    onClick={() => jumpToPaperPage(pageRef)}
+                    title={`跳到 PDF 第 ${pageRef} 页`}
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 11,
+                      fontFamily: "var(--mono)",
+                      background: "var(--accent)",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 3,
+                      padding: "1px 6px",
+                      cursor: "pointer",
+                      verticalAlign: "middle",
+                      opacity: 0.85,
+                    }}
+                  >
+                    ↗ p.{pageRef}
+                  </button>
+                )}
+              </h3>
+            )}
+            {sec.paras.map((p, j) => {
+              if (p.type === "h3") return <h4 key={j}>{p.text}</h4>;
+              return <p key={j}><RichText>{p.text}</RichText></p>;
+            })}
+          </div>
+        );
+      })}
 
       {(ps.nodes > 0) && (
         <div className="notice" style={{ marginTop: 32 }}>
@@ -1009,6 +1049,7 @@ function App() {
   const [currentArxivId, setCurrentArxivId] = useState(null);
   const [hasDashboard, setHasDashboard] = useState(false);
   const [articleFlash, setArticleFlash] = useState(null);
+  const [paperJump, setPaperJump] = useState(null);  // number | null — page to jump to in PaperView
   const [history, setHistory] = useState([]);  // conversation history (stateless: sent with each turn)
   const [dark, setDark] = useState(() => localStorage.getItem("pd-theme") === "dark");
   const feedRef = useRef(null);
@@ -1038,6 +1079,12 @@ function App() {
   const openGraph = (arxivId) => {
     if (arxivId) setCurrentArxivId(arxivId);
     setTab("graph");
+  };
+
+  // Jump to a specific PDF page and switch to the Paper tab
+  const jumpToPaperPage = (n) => {
+    setPaperJump(n);
+    setTab("paper");
   };
 
   // Pick a paper from search results — synthesize a chat message to distill it
@@ -1233,6 +1280,7 @@ function App() {
                 articleFlash={articleFlash}
                 onOpenGraph={(arxivId) => openGraph(arxivId)}
                 onOpenPaper={() => setTab("paper")}
+                jumpToPaperPage={jumpToPaperPage}
               />
             )}
             {tab === "graph" && (
@@ -1242,7 +1290,7 @@ function App() {
               />
             )}
             {tab === "paper" && (
-              <PaperView arxivId={currentArxivId} />
+              <PaperView arxivId={currentArxivId} jumpToPage={paperJump} />
             )}
             {tab === "dashboard" && hasDashboard && <DashboardView />}
           </div>
