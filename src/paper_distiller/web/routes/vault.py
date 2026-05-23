@@ -205,7 +205,9 @@ async def vault_article(
     vp = _vault_path_from(request, vault_path)
     root = _require_vault(vp)
 
-    md_path = root / category / f"{slug}.md"
+    md_path = (root / category / f"{slug}.md").resolve()
+    if not md_path.is_relative_to(root.resolve()):
+        raise HTTPException(status_code=400, detail="invalid slug")
     if not md_path.exists():
         raise HTTPException(status_code=404, detail=f"{category}/{slug} not found")
 
@@ -363,6 +365,10 @@ async def vault_graph(
     vault_path: str = Query(default=""),
 ):
     """Return full proof graph for one paper, ready for SVG renderer."""
+    # Defense-in-depth: reject IDs that look like path components
+    if ".." in paper_arxiv_id or "/" in paper_arxiv_id or "\\" in paper_arxiv_id:
+        raise HTTPException(status_code=400, detail="invalid paper_arxiv_id")
+
     vp = _vault_path_from(request, vault_path)
     root = _require_vault(vp)
 
